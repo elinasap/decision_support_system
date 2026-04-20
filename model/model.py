@@ -191,14 +191,17 @@ class Model:
             },
             "edges": {
                 eid: {
-                    "id":           e.id,
-                    "from_block":   e.from_block,
-                    "from_port":    e.from_port,
-                    "to_block":     e.to_block,
-                    "to_port":      e.to_port,
-                    "is_back_edge": e.is_back_edge,
-                    "edge_type":    e.edge_type.value,
-                    "comment":      e.comment,
+                    "id":              e.id,
+                    "from_block":      e.from_block,
+                    "from_port":       e.from_port,
+                    "to_block":        e.to_block,
+                    "to_port":         e.to_port,
+                    "is_back_edge":    e.is_back_edge,
+                    "edge_type":       e.edge_type.value,
+                    "detail_type":     e.detail_type,
+                    "defect_type":     e.defect_type,
+                    "repair_time_min": e.repair_time_min,
+                    "comment":         e.comment,
                 } for eid, e in self.edges.items()
             },
         }
@@ -227,7 +230,10 @@ class Model:
                 from_block=e["from_block"], from_port=e["from_port"],
                 to_block=e["to_block"],     to_port=e["to_port"],
                 is_back_edge=e["is_back_edge"],
-                edge_type=EdgeType(e["edge_type"]),
+                edge_type=EdgeType(e["edge_type"]) if e["edge_type"] != "defect_route" else EdgeType.NORMAL,
+                detail_type=e.get("detail_type", ""),
+                defect_type=e.get("defect_type", "repairable"),
+                repair_time_min=e.get("repair_time_min", 0.0),
                 comment=e.get("comment", ""),
             )
             model.edges[e["id"]] = edge

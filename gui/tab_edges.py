@@ -73,7 +73,7 @@ class TabEdges(tk.Frame):
         self._detail_type = ttk.Combobox(form, state="readonly", width=14)
         self._detail_type.grid(row=0, column=9, padx=(4, 12))
 
-        # Вторая строка: поля брака (показываются только для defect_route)
+        # Вторая строка: поля брака (показываются только для return-рёбер)
         self._defect_frame = tk.Frame(outer, bg=_CLR_BG)
         self._defect_frame.pack(fill="x", pady=(0, 8))
 
@@ -101,7 +101,7 @@ class TabEdges(tk.Frame):
         self._edge_type.bind("<<ComboboxSelected>>",
                              lambda e: self._toggle_defect_fields())
 
-        # Кнопка добавить
+        # Кнопки управления связями
         btn_row = tk.Frame(outer, bg=_CLR_BG)
         btn_row.pack(fill="x", pady=(0, 8))
         tk.Button(
@@ -114,6 +114,14 @@ class TabEdges(tk.Frame):
             bg=_CLR_BG, padx=8, pady=2, cursor="hand2",
             command=self._delete_selected,
         ).pack(side="left", padx=(8, 0))
+        tk.Button(
+            btn_row, text="✓ Применить изменения", font=_FONT, relief="flat",
+            bg=_CLR_BG, padx=8, pady=2, cursor="hand2",
+            command=self._apply_edit,
+        ).pack(side="left", padx=(8, 0))
+        tk.Label(btn_row,
+                 text="Выберите строку в таблице — поля заполнятся для редактирования",
+                 font=("Arial", 9), bg=_CLR_BG, fg="#888780").pack(side="left", padx=(8, 0))
 
         # ── Таблица связей ──────────────────────────────────────────────────
         self._build_section_label(outer, "Связи участка")
@@ -148,18 +156,6 @@ class TabEdges(tk.Frame):
         sb.pack(side="left", fill="y")
         self._tree.bind("<<TreeviewSelect>>", self._on_select)
 
-        # Кнопка применить редактирование
-        apply_row = tk.Frame(outer, bg=_CLR_BG)
-        apply_row.pack(fill="x", pady=(6, 0))
-        tk.Label(apply_row,
-                 text="Выберите строку в таблице — поля заполнятся для редактирования",
-                 font=("Arial", 9), bg=_CLR_BG, fg="#888780").pack(side="left")
-        tk.Button(
-            apply_row, text="✓ Применить изменения", font=_FONT, relief="flat",
-            bg=_CLR_BG, padx=8, pady=2, cursor="hand2",
-            command=self._apply_edit,
-        ).pack(side="right")
-
     def _build_section_label(self, parent, text):
         f = tk.Frame(parent, bg=_CLR_BG)
         f.pack(fill="x", pady=(8, 4))
@@ -169,9 +165,9 @@ class TabEdges(tk.Frame):
             side="left", fill="x", expand=True, padx=(8, 0), pady=6)
 
     def _toggle_defect_fields(self):
-        """Показывает/скрывает поля брака в зависимости от типа связи."""
-        is_defect = self._edge_type.get() == EdgeType.DEFECT_ROUTE.value
-        state = "normal" if is_defect else "disabled"
+        """Показывает/скрывает поля брака: активны только для RETURN-рёбер."""
+        is_return = self._edge_type.get() == EdgeType.RETURN.value
+        state = "normal" if is_return else "disabled"
         for w in self._defect_frame.winfo_children():
             try:
                 w.configure(state=state)

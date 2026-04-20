@@ -23,9 +23,8 @@ class BlockType(Enum):
 
 
 class EdgeType(Enum):
-    NORMAL       = "normal"
-    DEFECT_ROUTE = "defect_route"
-    RETURN       = "return"
+    NORMAL = "normal"
+    RETURN = "return"
 
 
 BLOCK_TYPE_LABELS = {
@@ -47,9 +46,8 @@ BLOCK_TYPE_GROUPS = {
 }
 
 EDGE_TYPE_LABELS = {
-    EdgeType.NORMAL:       "Обычная",
-    EdgeType.DEFECT_ROUTE: "Маршрут брака",
-    EdgeType.RETURN:       "Возврат",
+    EdgeType.NORMAL: "Обычная",
+    EdgeType.RETURN: "Возврат (обратная связь)",
 }
 
 

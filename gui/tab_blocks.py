@@ -310,9 +310,8 @@ class TabBlocks(tk.Frame):
 # Поля для каждого типа блока: (ключ, метка, тип виджета, дефолт)
 _BLOCK_FIELDS = {
     BlockType.SOURCE: [
-        ("detail_type",        "Тип детали",              "combo_detail", ""),
-        ("volume",             "Начальный объём (шт)",    "spinbox",      50),
-        ("replenishment_time", "Время пополнения (мин)",  "spinbox",      480),
+        ("detail_type", "Тип детали",                    "combo_detail", ""),
+        ("capacity",    "Ёмкость / начальный запас (шт)", "spinbox",      50),
     ],
     BlockType.BUFFER: [
         ("detail_type",  "Тип детали",          "combo_detail", ""),
@@ -341,9 +340,9 @@ _BLOCK_FIELDS = {
     ],
     BlockType.CONTROL: [
         ("input_type",       "Тип детали",              "combo_detail", ""),
-        ("defect_rate",      "Доля брака (0.0–0.99)",   "entry",        "0.10"),
+        ("defect_prob",      "Доля брака (0.0–0.99)",   "entry",        "0.10"),
+        ("threshold",        "Порог контроля (0.0–1.0)","entry",        "0.10"),
         ("control_time_min", "Время контроля (мин)",    "spinbox",      5),
-        ("extra_time_min",   "Доп. время вне опер. (мин)", "spinbox",   0),
     ],
 }
 
@@ -420,22 +419,9 @@ class BlockDialog(tk.Toplevel):
         self._type_combo.bind("<<ComboboxSelected>>",
                               lambda e: self._refresh_fields())
 
-        if self.edit_block:
-            # При редактировании синхронизируем группу
-            for grp, types in BLOCK_TYPE_GROUPS.items():
-                if self.edit_block.type in types:
-                    self._group_var.set(grp)
-                    break
-        self._refresh_type_combo()
-
-        # Динамические поля
-        self._fields_frame = tk.Frame(self, bg=_CLR_BG)
-        self._fields_frame.pack(fill="both", expand=True, padx=20, pady=4)
-        self._refresh_fields()
-
-        # Кнопки
+        # Кнопки — пакуем с side="bottom" до fields_frame, чтобы были видны всегда
         btn_row = tk.Frame(self, bg=_CLR_BG)
-        btn_row.pack(fill="x", padx=20, pady=10)
+        btn_row.pack(side="bottom", fill="x", padx=20, pady=10)
         tk.Button(
             btn_row, text="Сохранить", font=_FONT_BOLD, relief="flat",
             bg="#534AB7", fg="white", padx=12, pady=4, cursor="hand2",
@@ -446,6 +432,17 @@ class BlockDialog(tk.Toplevel):
             bg=_CLR_BG, padx=12, pady=4, cursor="hand2",
             command=self.destroy,
         ).pack(side="right", padx=(0, 8))
+
+        # Динамические поля — создаём до _refresh_type_combo, пакуем здесь
+        self._fields_frame = tk.Frame(self, bg=_CLR_BG)
+        self._fields_frame.pack(fill="both", expand=True, padx=20, pady=4)
+
+        if self.edit_block:
+            for grp, types in BLOCK_TYPE_GROUPS.items():
+                if self.edit_block.type in types:
+                    self._group_var.set(grp)
+                    break
+        self._refresh_type_combo()
 
     def _refresh_type_combo(self):
         grp = self._group_var.get()
