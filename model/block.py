@@ -60,7 +60,7 @@ def make_ports(block_type: BlockType, params: dict) -> PortSet:
     if block_type == BlockType.PROCESS:
         # inputs_count >= 1, по умолчанию 1
         n = max(1, int(params.get("inputs_count", 1)))
-        in_ports = [f"in{i+1}" for i in range(n)]
+        in_ports = [f"in{i+1}" for i in range(n)] + ["in_rework"]
         out_ports = ["out_good"]
         if params.get("has_defect_output", False):
             out_ports.append("out_defect")

@@ -43,6 +43,8 @@ def check_ports(model: Model) -> ValidationResult:
                 continue
             if block.type == BlockType.SINK and port.startswith("out"):
                 continue
+            if block.type == BlockType.PROCESS and port == "in_rework":
+                continue
             filtered.append(port)
 
         if filtered:
@@ -64,11 +66,15 @@ def check_edges(model: Model) -> ValidationResult:
       - нет ли петли на себя (блок → тот же блок)
       - нет ли запрещённых соединений (out → out, in → in)
       - корректны ли направления потоков (out → in)
+      - не более одной входящей связи на каждый входной порт (§11 ограничение 1)
     """
     result = ValidationResult()
     seen_pairs: set[tuple] = set()
+    in_port_count: dict[tuple, int] = {}
 
     for edge in model.edges.values():
+        key = (edge.to_block, edge.to_port)
+        in_port_count[key] = in_port_count.get(key, 0) + 1
         pair = (edge.from_block, edge.from_port, edge.to_block, edge.to_port)
 
         # Дублирующие связи
@@ -107,6 +113,13 @@ def check_edges(model: Model) -> ValidationResult:
                 f"Связь {edge.id}: блок '{edge.to_block}' не существует"
             )
 
+    # Ограничение §11.1: один входной порт — не более одной входящей связи
+    for (block_id, port), count in in_port_count.items():
+        if count > 1:
+            result.add_error(
+                f"Порт {block_id}.{port}: более одной входящей связи ({count})"
+            )
+
     return result
 
 
@@ -122,13 +135,22 @@ def check_operations(model: Model) -> ValidationResult:
       - задано время операции
       - сформированы требуемые выходы
       - нет противоречий по типам деталей
+      - в модели есть хотя бы один SOURCE и один SINK (§11 ограничение 5)
     """
     result = ValidationResult()
+
+    has_source = any(b.type == BlockType.SOURCE for b in model.blocks.values())
+    has_sink   = any(b.type == BlockType.SINK   for b in model.blocks.values())
+    if not has_source:
+        result.add_error("В модели нет ни одного блока SOURCE (источника деталей)")
+    if not has_sink:
+        result.add_error("В модели нет ни одного блока SINK (приёмника деталей)")
 
     for block in model.blocks.values():
 
         if block.type == BlockType.PROCESS:
-            if len(block.ports.in_ports) != 1:
+            regular_inputs = [p for p in block.ports.in_ports if p != "in_rework"]
+            if len(regular_inputs) != 1:
                 result.add_error(
                     f"Блок {block.display_name()}: операция должна иметь ровно 1 вход"
                 )
@@ -171,9 +193,9 @@ def check_operations(model: Model) -> ValidationResult:
                 )
 
         if block.type == BlockType.SOURCE:
-            if "volume" not in block.params:
+            if "capacity" not in block.params:
                 result.add_warning(
-                    f"Блок {block.display_name()}: не задан объём склада (volume)"
+                    f"Блок {block.display_name()}: не задана ёмкость склада (capacity)"
                 )
 
     return result
@@ -211,29 +233,28 @@ def check_control(model: Model) -> ValidationResult:
                     f"маршрут бракованной продукции не задан"
                 )
 
-        # Процент брака
-        defect_rate = block.params.get("defect_rate")
-        if defect_rate is None:
+        # Доля брака
+        defect_prob = block.params.get("defect_prob")
+        if defect_prob is None:
             result.add_error(
-                f"Блок {block.display_name()}: не задан процент брака (defect_rate)"
+                f"Блок {block.display_name()}: не задана доля брака (defect_prob)"
             )
-        elif not (0.0 <= defect_rate < 1.0):
+        elif not (0.0 <= defect_prob < 1.0):
             result.add_error(
-                f"Блок {block.display_name()}: defect_rate должен быть в диапазоне "
-                f"[0, 1), получено {defect_rate}"
+                f"Блок {block.display_name()}: defect_prob должен быть в диапазоне "
+                f"[0, 1), получено {defect_prob}"
             )
 
-        # Дополнительное время
-        extra = block.params.get("extra_time_min", 0)
-        if extra < 0:
+        # Порог контроля
+        threshold = block.params.get("threshold")
+        if threshold is None:
             result.add_error(
-                f"Блок {block.display_name()}: extra_time_min не может быть "
-                f"отрицательным"
+                f"Блок {block.display_name()}: не задан порог контроля (threshold)"
             )
-        elif extra > 0:
-            result.add_warning(
-                f"Блок {block.display_name()}: задано дополнительное время "
-                f"контроля вне операции ({extra} мин)"
+        elif not (0.0 <= threshold <= 1.0):
+            result.add_error(
+                f"Блок {block.display_name()}: threshold должен быть в диапазоне "
+                f"[0, 1], получено {threshold}"
             )
 
     return result
