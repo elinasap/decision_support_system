@@ -22,11 +22,6 @@ class BlockType(Enum):
     CONTROL   = "control"
 
 
-class EdgeType(Enum):
-    NORMAL = "normal"
-    RETURN = "return"
-
-
 BLOCK_TYPE_LABELS = {
     BlockType.SOURCE:    "Источник (только выход)",
     BlockType.BUFFER:    "Буфер / промежуточный склад",
@@ -44,12 +39,6 @@ BLOCK_TYPE_GROUPS = {
     "Тех. операция":  [BlockType.PROCESS, BlockType.ASSEMBLY],
     "Контроль":       [BlockType.CONTROL],
 }
-
-EDGE_TYPE_LABELS = {
-    EdgeType.NORMAL: "Обычная",
-    EdgeType.RETURN: "Возврат (обратная связь)",
-}
-
 
 @dataclass
 class PortSet:

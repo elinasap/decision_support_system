@@ -4,11 +4,10 @@ gui/tab_blocks.py
 Вкладка 1 — «Детали и блоки».
 
 Две секции:
-  - Типы деталей: добавить ID + название, удалить
+  - Типы деталей: добавить ID + название + ед. изм. (combobox), удалить
   - Блоки участка: таблица, кнопки добавить / редактировать / удалить
 
 Диалог добавления/редактирования блока открывается в отдельном окне.
-Поля формы меняются в зависимости от выбранного типа блока.
 """
 
 import tkinter as tk
@@ -16,7 +15,6 @@ from tkinter import ttk, messagebox
 from model import BlockType, BLOCK_TYPE_LABELS, BLOCK_TYPE_GROUPS
 
 
-# Цвета типов блоков (те же что в макете)
 _TYPE_CLR = {
     BlockType.SOURCE:    "#E2EFDA",
     BlockType.BUFFER:    "#D5F0E8",
@@ -33,6 +31,8 @@ _FONT       = ("Arial", 10)
 _FONT_BOLD  = ("Arial", 10, "bold")
 _FONT_SMALL = ("Arial", 9)
 
+_UNIT_OPTIONS = ["шт", "кг", "г", "м", "м²", "м³", "л", "мл", "компл."]
+
 
 class TabBlocks(tk.Frame):
     """Содержимое вкладки 1."""
@@ -46,7 +46,6 @@ class TabBlocks(tk.Frame):
     # ── Построение интерфейса ─────────────────────────────────────────────────
 
     def _build_ui(self):
-        # Прокручиваемый контейнер
         outer = tk.Frame(self, bg=_CLR_BG)
         outer.pack(fill="both", expand=True, padx=20, pady=16)
 
@@ -56,7 +55,6 @@ class TabBlocks(tk.Frame):
         det_area = tk.Frame(outer, bg=_CLR_BG)
         det_area.pack(fill="x", pady=(4, 12))
 
-        # Строка ввода
         row_in = tk.Frame(det_area, bg=_CLR_BG)
         row_in.pack(fill="x")
 
@@ -69,8 +67,11 @@ class TabBlocks(tk.Frame):
         self._det_label.pack(side="left", padx=(4, 10))
 
         tk.Label(row_in, text="Ед. изм.", font=_FONT, bg=_CLR_BG).pack(side="left")
-        self._det_unit = tk.Entry(row_in, font=_FONT, width=8)
-        self._det_unit.insert(0, "шт")
+        self._det_unit = ttk.Combobox(
+            row_in, font=_FONT, width=8,
+            values=_UNIT_OPTIONS, state="readonly",
+        )
+        self._det_unit.set("шт")
         self._det_unit.pack(side="left", padx=(4, 10))
 
         tk.Button(
@@ -79,14 +80,12 @@ class TabBlocks(tk.Frame):
             command=self._add_detail,
         ).pack(side="left")
 
-        # Список добавленных деталей (теги)
         self._det_tags_frame = tk.Frame(det_area, bg=_CLR_BG)
         self._det_tags_frame.pack(fill="x", pady=(8, 0))
 
         # ── Секция 2: Блоки ─────────────────────────────────────────────────
         self._build_section_label(outer, "Блоки участка")
 
-        # Панель кнопок над таблицей
         btn_row = tk.Frame(outer, bg=_CLR_BG)
         btn_row.pack(fill="x", pady=(4, 6))
 
@@ -108,7 +107,6 @@ class TabBlocks(tk.Frame):
             command=self._delete_selected_block,
         ).pack(side="left", padx=(8, 0))
 
-        # Таблица блоков
         cols = ("id", "type", "label", "in_type", "out_type")
         self._tree = ttk.Treeview(
             outer, columns=cols, show="headings", height=12,
@@ -123,10 +121,9 @@ class TabBlocks(tk.Frame):
         self._tree.column("id",      width=60,  anchor="center")
         self._tree.column("type",    width=130, anchor="center")
         self._tree.column("label",   width=260)
-        self._tree.column("in_type", width=120, anchor="center")
-        self._tree.column("out_type",width=120, anchor="center")
+        self._tree.column("in_type", width=160, anchor="center")
+        self._tree.column("out_type",width=160, anchor="center")
 
-        # Стили строк по типу блока
         style = ttk.Style()
         for btype, clr in _TYPE_CLR.items():
             style.configure(f"{btype.value}.Treeview", background=clr)
@@ -173,10 +170,10 @@ class TabBlocks(tk.Frame):
         self.app.set_status(f"Добавлен тип детали: {det_id}")
 
     def _refresh_tags(self):
-        """Перерисовывает теги-пилюли типов деталей."""
         for w in self._det_tags_frame.winfo_children():
             w.destroy()
-        for det_id in self.app.model.detail_types:
+        for det_id, info in self.app.model.detail_types.items():
+            label = info.get("label", det_id)
             tag_frame = tk.Frame(
                 self._det_tags_frame,
                 bg="#EAF3DE", highlightbackground="#3B6D11",
@@ -184,7 +181,7 @@ class TabBlocks(tk.Frame):
             )
             tag_frame.pack(side="left", padx=(0, 6), pady=2)
             tk.Label(
-                tag_frame, text=det_id,
+                tag_frame, text=f"{det_id}: {label}",
                 font=_FONT_SMALL, bg="#EAF3DE", fg="#27500A",
                 padx=8, pady=2,
             ).pack(side="left")
@@ -193,7 +190,6 @@ class TabBlocks(tk.Frame):
                 font=_FONT_SMALL, bg="#EAF3DE", fg="#27500A",
                 cursor="hand2", padx=4,
             ).pack(side="left")
-            # Привязываем удаление к конкретному ID
             tag_frame.bind("<Button-1>",
                 lambda e, d=det_id: self._remove_detail(d))
             for child in tag_frame.winfo_children():
@@ -201,7 +197,6 @@ class TabBlocks(tk.Frame):
                     lambda e, d=det_id: self._remove_detail(d))
 
     def _remove_detail(self, det_id: str):
-        # Проверяем, не используется ли тип в блоках
         in_use = any(
             b.params.get("input_type") == det_id or
             b.params.get("output_type") == det_id or
@@ -220,11 +215,30 @@ class TabBlocks(tk.Frame):
 
     # ── Таблица блоков ───────────────────────────────────────────────────────
 
+    def _detail_display(self, det_id: str) -> str:
+        """Формирует строку 'ID: Название' или прочерк."""
+        if not det_id:
+            return "—"
+        info = self.app.model.detail_types.get(det_id)
+        if info:
+            return f"{det_id}: {info.get('label', det_id)}"
+        return det_id
+
     def _refresh_blocks_table(self):
-        """Перезаполняет таблицу блоков из модели."""
         for item in self._tree.get_children():
             self._tree.delete(item)
         for block in self.app.model.blocks.values():
+            # Логика колонок Вх./Вых. деталь зависит от типа блока
+            if block.type == BlockType.SOURCE:
+                in_det  = "—"
+                out_det = self._detail_display(block.params.get("detail_type", ""))
+            elif block.type == BlockType.SINK:
+                in_det  = self._detail_display(block.params.get("detail_type", ""))
+                out_det = "—"
+            else:
+                in_det  = self._detail_display(block.params.get("input_type", ""))
+                out_det = self._detail_display(block.params.get("output_type", ""))
+
             self._tree.insert(
                 "", "end",
                 iid=block.id,
@@ -232,8 +246,8 @@ class TabBlocks(tk.Frame):
                     block.id,
                     block.type.value,
                     block.label,
-                    block.params.get("input_type",  block.params.get("detail_type", "—")),
-                    block.params.get("output_type", "—"),
+                    in_det,
+                    out_det,
                 ),
                 tags=(block.type.value,),
             )
@@ -248,7 +262,6 @@ class TabBlocks(tk.Frame):
             messagebox.showinfo("Выберите блок", "Выберите блок в таблице.", parent=self)
             return
         block = self.app.model.blocks[bid]
-        # Проверяем нет ли связей
         linked = [e for e in self.app.model.edges.values()
                   if e.from_block == bid or e.to_block == bid]
         if linked:
@@ -289,7 +302,6 @@ class TabBlocks(tk.Frame):
         self._refresh_blocks_table()
 
     def validate(self) -> bool:
-        """Проверка перед переходом на следующую вкладку."""
         if not self.app.model.detail_types:
             messagebox.showwarning(
                 "Нет типов деталей",
@@ -314,35 +326,35 @@ _BLOCK_FIELDS = {
         ("capacity",    "Ёмкость / начальный запас (шт)", "spinbox",      50),
     ],
     BlockType.BUFFER: [
-        ("detail_type",  "Тип детали",          "combo_detail", ""),
-        ("capacity",     "Ёмкость (шт)",        "spinbox",      50),
-        ("time_min",     "Задержка (мин)",       "spinbox",      0),
+        ("detail_type",  "Тип детали",              "combo_detail", ""),
+        ("capacity",     "Ёмкость (шт)",            "spinbox",      50),
+        ("time_sec",     "Задержка (сек)",           "spinbox",      0),
     ],
     BlockType.SINK: [
-        ("detail_type",  "Тип детали",          "combo_detail", ""),
-        ("capacity",     "Ёмкость (шт)",        "spinbox",      100),
+        ("detail_type",  "Тип детали",              "combo_detail", ""),
+        ("capacity",     "Ёмкость (шт)",            "spinbox",      100),
     ],
     BlockType.TRANSPORT: [
-        ("detail_type", "Тип детали",              "combo_detail", ""),
-        ("time_min",    "Время транспортировки (мин)", "spinbox",   3),
+        ("detail_type", "Тип детали",                   "combo_detail", ""),
+        ("time_sec",    "Время транспортировки (сек)",   "spinbox",      180),
     ],
     BlockType.PROCESS: [
-        ("inputs_count",       "Кол-во входов",           "spinbox",      1),
-        ("input_type",         "Тип входной детали",      "combo_detail", ""),
-        ("output_type",        "Тип выходной детали",     "combo_detail", ""),
-        ("operation_time_min", "Время операции (мин)",    "spinbox",      15),
-        ("has_defect_output",  "Есть выход брака",        "check",        False),
+        ("input_type",          "Тип входной детали",      "combo_detail", ""),
+        ("output_type",         "Тип выходной детали",     "combo_detail", ""),
+        ("operation_time_sec",  "Время операции (сек)",    "spinbox",      900),
+        ("has_internal_control","Встроенный контроль",     "check",        False),
+        ("defect_rate",         "Доля брака (0.0–0.99)",   "entry_defect", "0.05"),
     ],
     BlockType.ASSEMBLY: [
         ("inputs_count",       "Количество входов",       "spinbox",      2),
         ("output_type",        "Тип выходной детали",     "combo_detail", ""),
-        ("operation_time_min", "Время сборки (мин)",      "spinbox",      10),
+        ("operation_time_sec", "Время сборки (сек)",      "spinbox",      600),
     ],
     BlockType.CONTROL: [
-        ("input_type",       "Тип детали",              "combo_detail", ""),
-        ("defect_prob",      "Доля брака (0.0–0.99)",   "entry",        "0.10"),
-        ("threshold",        "Порог контроля (0.0–1.0)","entry",        "0.10"),
-        ("control_time_min", "Время контроля (мин)",    "spinbox",      5),
+        ("input_type",        "Тип детали",               "combo_detail", ""),
+        ("defect_prob",       "Доля брака (0.0–0.99)",    "entry",        "0.10"),
+        ("threshold",         "Порог контроля (0.0–1.0)", "entry",        "0.10"),
+        ("control_time_sec",  "Время контроля (сек)",     "spinbox",      300),
     ],
 }
 
@@ -357,7 +369,7 @@ class BlockDialog(tk.Toplevel):
         self.edit_block = edit_block
 
         self.title("Редактировать блок" if edit_block else "Добавить блок")
-        self.geometry("500x560")
+        self.geometry("520x580")
         self.resizable(False, False)
         self.configure(bg=_CLR_BG)
         self.grab_set()
@@ -370,7 +382,7 @@ class BlockDialog(tk.Toplevel):
     def _build_ui(self):
         pad = {"padx": 20, "pady": 6}
 
-        # ID блока (редактируемый)
+        # ID блока
         id_row = tk.Frame(self, bg=_CLR_BG)
         id_row.pack(fill="x", padx=20, pady=(12, 0))
         tk.Label(id_row, text="ID блока", font=_FONT_BOLD,
@@ -391,7 +403,7 @@ class BlockDialog(tk.Toplevel):
         tk.Entry(self, textvariable=self._label_var,
                  font=_FONT, width=44).pack(fill="x", padx=20)
 
-        # Группа типа (только при создании)
+        # Группа типа
         tk.Label(self, text="Категория", font=_FONT_BOLD,
                  bg=_CLR_BG, anchor="w").pack(fill="x", **pad)
         self._group_var = tk.StringVar(value="Тех. операция")
@@ -404,7 +416,7 @@ class BlockDialog(tk.Toplevel):
         group_combo.pack(anchor="w", padx=20)
         group_combo.bind("<<ComboboxSelected>>", lambda e: self._refresh_type_combo())
 
-        # Тип блока внутри группы
+        # Тип блока
         tk.Label(self, text="Тип блока", font=_FONT_BOLD,
                  bg=_CLR_BG, anchor="w").pack(fill="x", **pad)
         self._type_var = tk.StringVar(
@@ -419,7 +431,7 @@ class BlockDialog(tk.Toplevel):
         self._type_combo.bind("<<ComboboxSelected>>",
                               lambda e: self._refresh_fields())
 
-        # Кнопки — пакуем с side="bottom" до fields_frame, чтобы были видны всегда
+        # Кнопки
         btn_row = tk.Frame(self, bg=_CLR_BG)
         btn_row.pack(side="bottom", fill="x", padx=20, pady=10)
         tk.Button(
@@ -433,7 +445,7 @@ class BlockDialog(tk.Toplevel):
             command=self.destroy,
         ).pack(side="right", padx=(0, 8))
 
-        # Динамические поля — создаём до _refresh_type_combo, пакуем здесь
+        # Динамические поля
         self._fields_frame = tk.Frame(self, bg=_CLR_BG)
         self._fields_frame.pack(fill="both", expand=True, padx=20, pady=4)
 
@@ -459,9 +471,30 @@ class BlockDialog(tk.Toplevel):
 
         block_type = BlockType(self._type_var.get())
         detail_ids = list(self.app.model.detail_types.keys())
-        fields     = _BLOCK_FIELDS.get(block_type, [])
+        # Комбобокс деталей показывает «ID: Название»
+        detail_items = [
+            f"{did}: {self.app.model.detail_types[did].get('label', did)}"
+            for did in detail_ids
+        ]
+        fields = _BLOCK_FIELDS.get(block_type, [])
+
+        self._defect_rate_row = None  # строка defect_rate, управляется чекбоксом
 
         for key, label, wtype, default in fields:
+            if wtype == "entry_defect":
+                # Поле defect_rate — показывается только при has_internal_control=True
+                row = tk.Frame(self._fields_frame, bg=_CLR_BG)
+                row.pack(fill="x", pady=2)
+                tk.Label(row, text=label, font=_FONT, bg=_CLR_BG,
+                         width=30, anchor="w").pack(side="left")
+                var = tk.StringVar(value=str(default))
+                w = tk.Entry(row, textvariable=var, font=_FONT, width=12)
+                w.pack(side="left")
+                self._field_widgets[key] = var
+                self._defect_rate_row = row
+                row.pack_forget()  # скрываем по умолчанию
+                continue
+
             row = tk.Frame(self._fields_frame, bg=_CLR_BG)
             row.pack(fill="x", pady=2)
             tk.Label(row, text=label, font=_FONT, bg=_CLR_BG,
@@ -481,35 +514,47 @@ class BlockDialog(tk.Toplevel):
                 self._field_widgets[key] = var
 
             elif wtype == "combo_detail":
-                var = tk.StringVar(value=detail_ids[0] if detail_ids else "")
+                var = tk.StringVar(value=detail_items[0] if detail_items else "")
                 w = ttk.Combobox(row, textvariable=var,
-                                 values=detail_ids, state="readonly", width=18)
+                                 values=detail_items, state="readonly", width=24)
                 w.pack(side="left")
                 self._field_widgets[key] = var
 
             elif wtype == "check":
                 var = tk.BooleanVar(value=bool(default))
-                w = tk.Checkbutton(row, variable=var, bg=_CLR_BG)
+                w = tk.Checkbutton(row, variable=var, bg=_CLR_BG,
+                                   command=self._toggle_defect_rate)
                 w.pack(side="left")
                 self._field_widgets[key] = var
 
-        # Для ASSEMBLY — отдельные поля per-input
+        # ASSEMBLY — отдельные поля per-input
         if block_type == BlockType.ASSEMBLY:
             self._assembly_input_vars: list[tk.StringVar] = []
             tk.Label(self._fields_frame, text="Типы входных деталей:",
                      font=_FONT_BOLD, bg=_CLR_BG).pack(anchor="w", pady=(6, 2))
             n_var = self._field_widgets.get("inputs_count")
             n = int(n_var.get()) if n_var else 2
-            self._render_assembly_inputs(n, detail_ids)
+            self._render_assembly_inputs(n, detail_items, detail_ids)
             if n_var:
                 n_var.trace_add("write",
                     lambda *a: self._render_assembly_inputs(
-                        int(n_var.get()), detail_ids))
+                        int(n_var.get()), detail_items, detail_ids))
 
-    def _render_assembly_inputs(self, n: int, detail_ids: list):
-        # Удаляем старые поля входов (после метки)
+        # Показываем defect_rate если has_internal_control уже включён
+        self._toggle_defect_rate()
+
+    def _toggle_defect_rate(self):
+        """Показывает/скрывает строку defect_rate в зависимости от has_internal_control."""
+        if self._defect_rate_row is None:
+            return
+        ctrl_var = self._field_widgets.get("has_internal_control")
+        if ctrl_var and ctrl_var.get():
+            self._defect_rate_row.pack(fill="x", pady=2)
+        else:
+            self._defect_rate_row.pack_forget()
+
+    def _render_assembly_inputs(self, n: int, detail_items: list, detail_ids: list):
         children = self._fields_frame.winfo_children()
-        # Находим фреймы с input_N и удаляем
         for w in children:
             if getattr(w, "_is_assembly_input", False):
                 w.destroy()
@@ -520,68 +565,91 @@ class BlockDialog(tk.Toplevel):
             row.pack(fill="x", pady=2)
             tk.Label(row, text=f"  Вход {i+1} (in{i+1})",
                      font=_FONT, bg=_CLR_BG, width=30, anchor="w").pack(side="left")
-            var = tk.StringVar(value=detail_ids[0] if detail_ids else "")
+            var = tk.StringVar(value=detail_items[0] if detail_items else "")
             ttk.Combobox(row, textvariable=var,
-                         values=detail_ids, state="readonly",
-                         width=18).pack(side="left")
+                         values=detail_items, state="readonly",
+                         width=24).pack(side="left")
             self._assembly_input_vars.append(var)
 
     def _populate(self, block):
         self._label_var.set(block.label)
+        detail_items = {
+            did: f"{did}: {info.get('label', did)}"
+            for did, info in self.app.model.detail_types.items()
+        }
         for key, widget_var in self._field_widgets.items():
             val = block.params.get(key)
-            if val is not None:
-                if isinstance(widget_var, tk.BooleanVar):
-                    widget_var.set(bool(val))
-                elif isinstance(widget_var, tk.IntVar):
-                    try: widget_var.set(int(val))
-                    except (ValueError, TypeError): pass
+            if val is None:
+                continue
+            if isinstance(widget_var, tk.BooleanVar):
+                widget_var.set(bool(val))
+            elif isinstance(widget_var, tk.IntVar):
+                try:
+                    widget_var.set(int(val))
+                except (ValueError, TypeError):
+                    pass
+            else:
+                # combo_detail — нужно отобразить как «ID: Название»
+                str_val = str(val)
+                if str_val in detail_items:
+                    widget_var.set(detail_items[str_val])
                 else:
-                    widget_var.set(str(val))
+                    widget_var.set(str_val)
+        self._toggle_defect_rate()
+
+    def _detail_id_from_var(self, var: tk.StringVar) -> str:
+        """Извлекает ID детали из строки 'ID: Название'."""
+        val = var.get()
+        return val.split(":")[0].strip() if val else ""
 
     def _save(self):
         label = self._label_var.get().strip()
         if not label:
-            from tkinter import messagebox
             messagebox.showwarning("Ошибка", "Введите наименование.", parent=self)
             return
 
         block_type = BlockType(self._type_var.get())
         params: dict = {}
+        detail_keys = {
+            key for key, _, wtype, _ in _BLOCK_FIELDS.get(block_type, [])
+            if wtype in ("combo_detail",)
+        }
+
         for key, widget_var in self._field_widgets.items():
             val = widget_var.get()
             if isinstance(widget_var, tk.BooleanVar):
                 params[key] = bool(val)
             elif isinstance(widget_var, tk.IntVar):
                 params[key] = int(val)
+            elif key in detail_keys:
+                # combo_detail — сохраняем только ID
+                params[key] = str(val).split(":")[0].strip()
             else:
                 try:
                     params[key] = float(val) if "." in str(val) else int(val)
                 except (ValueError, TypeError):
                     params[key] = val
 
-        # Для ASSEMBLY сохраняем типы каждого входа
+        # ASSEMBLY — сохраняем типы входов (только ID)
         if block_type == BlockType.ASSEMBLY and hasattr(self, "_assembly_input_vars"):
-            params["input_types"] = [v.get() for v in self._assembly_input_vars]
+            params["input_types"] = [
+                v.get().split(":")[0].strip() for v in self._assembly_input_vars
+            ]
 
         if self.edit_block:
-            # Переименование ID если изменился
             new_id = self._id_var.get().strip()
             if new_id and new_id != self.edit_block.id:
                 ok = self.app.model.renumber_block(self.edit_block.id, new_id)
                 if not ok:
-                    from tkinter import messagebox
                     messagebox.showwarning("Ошибка",
                         f"ID '{new_id}' уже занят.", parent=self)
                     return
             self.app.model.update_block(
                 new_id if new_id else self.edit_block.id, label, params)
         else:
-            # При создании — можно задать ID вручную
             custom_id = self._id_var.get().strip()
             if custom_id:
                 if custom_id in self.app.model.blocks:
-                    from tkinter import messagebox
                     messagebox.showwarning("Ошибка",
                         f"ID '{custom_id}' уже занят.", parent=self)
                     return
@@ -597,23 +665,3 @@ class BlockDialog(tk.Toplevel):
         self.parent_tab._refresh_blocks_table()
         self.app.refresh_model()
         self.destroy()
-
-    # ── Публичные методы (вызываются из App) ─────────────────────────────────
-
-    def on_activate(self):
-        self._refresh_tags()
-        self._refresh_blocks_table()
-
-    def validate(self) -> bool:
-        """Проверка перед переходом на следующую вкладку."""
-        if not self.app.model.detail_types:
-            messagebox.showwarning(
-                "Нет типов деталей",
-                "Добавьте хотя бы один тип детали.", parent=self)
-            return False
-        if not self.app.model.blocks:
-            messagebox.showwarning(
-                "Нет блоков",
-                "Добавьте хотя бы один блок участка.", parent=self)
-            return False
-        return True

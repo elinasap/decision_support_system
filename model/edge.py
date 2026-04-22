@@ -5,22 +5,20 @@ model/edge.py
 """
 
 from dataclasses import dataclass
-from .types import EdgeType
 
 
 @dataclass
 class Edge:
-    id:              str
-    from_block:      str
-    from_port:       str
-    to_block:        str
-    to_port:         str
-    is_back_edge:    bool     = False
-    edge_type:       EdgeType = EdgeType.NORMAL
-    detail_type:     str      = ""
-    defect_type:     str      = "repairable"
-    repair_time_min: float    = 0.0
-    comment:         str      = ""
+    id:             str
+    from_block:     str
+    from_port:      str
+    to_block:       str
+    to_port:        str
+    is_back_edge:   bool  = False
+    detail_type:    str   = ""
+    defect_type:    str   = "repairable"
+    repair_time_sec: float = 0.0
+    comment:        str   = ""
 
     def display_name(self) -> str:
         return f"{self.from_block}.{self.from_port} -> {self.to_block}.{self.to_port}"

@@ -10,7 +10,7 @@ model/model.py
 """
 
 from dataclasses import dataclass, field
-from .types import BlockType, EdgeType
+from .types import BlockType
 from .block import Block, make_ports
 from .edge import Edge, is_back_edge as _detect_back_edge
 
@@ -87,11 +87,10 @@ class Model:
                  from_port:       str,
                  to_block:        str,
                  to_port:         str,
-                 edge_type:       EdgeType = EdgeType.NORMAL,
-                 detail_type:     str      = "",
-                 defect_type:     str      = "repairable",
-                 repair_time_min: float    = 0.0,
-                 comment:         str      = "") -> Edge:
+                 detail_type:     str   = "",
+                 defect_type:     str   = "repairable",
+                 repair_time_sec: float = 0.0,
+                 comment:         str   = "") -> Edge:
         """
         Создаёт связь между портами двух блоков.
 
@@ -109,10 +108,9 @@ class Model:
             from_block=from_block, from_port=from_port,
             to_block=to_block,     to_port=to_port,
             is_back_edge=back,
-            edge_type=edge_type,
             detail_type=detail_type,
             defect_type=defect_type,
-            repair_time_min=repair_time_min,
+            repair_time_sec=repair_time_sec,
             comment=comment,
         )
         self.edges[eid] = edge
@@ -197,10 +195,9 @@ class Model:
                     "to_block":        e.to_block,
                     "to_port":         e.to_port,
                     "is_back_edge":    e.is_back_edge,
-                    "edge_type":       e.edge_type.value,
                     "detail_type":     e.detail_type,
                     "defect_type":     e.defect_type,
-                    "repair_time_min": e.repair_time_min,
+                    "repair_time_sec": e.repair_time_sec,
                     "comment":         e.comment,
                 } for eid, e in self.edges.items()
             },
@@ -230,10 +227,9 @@ class Model:
                 from_block=e["from_block"], from_port=e["from_port"],
                 to_block=e["to_block"],     to_port=e["to_port"],
                 is_back_edge=e["is_back_edge"],
-                edge_type=EdgeType(e["edge_type"]) if e["edge_type"] != "defect_route" else EdgeType.NORMAL,
                 detail_type=e.get("detail_type", ""),
                 defect_type=e.get("defect_type", "repairable"),
-                repair_time_min=e.get("repair_time_min", 0.0),
+                repair_time_sec=e.get("repair_time_sec", e.get("repair_time_min", 0.0)),
                 comment=e.get("comment", ""),
             )
             model.edges[e["id"]] = edge

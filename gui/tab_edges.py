@@ -5,11 +5,11 @@ gui/tab_edges.py
 
 Таблица существующих связей + форма добавления новой.
 Обратные рёбра (петли) подсвечиваются оранжевым автоматически.
+Тип связи выводится из имени порта-источника (out_defect) и флага is_back_edge.
 """
 
 import tkinter as tk
 from tkinter import ttk, messagebox
-from model import EdgeType
 
 
 _CLR_BG   = "#F8F7F5"
@@ -25,6 +25,7 @@ class TabEdges(tk.Frame):
         super().__init__(parent, bg=_CLR_BG)
         self.app = app
         self.pack(fill="both", expand=True)
+        self._editing_eid = None
         self._build_ui()
 
     def _build_ui(self):
@@ -40,7 +41,7 @@ class TabEdges(tk.Frame):
         # Откуда: блок + порт
         tk.Label(form, text="Откуда", font=_FONT, bg=_CLR_BG, width=8).grid(
             row=0, column=0, sticky="w")
-        self._from_block = ttk.Combobox(form, state="readonly", width=10)
+        self._from_block = ttk.Combobox(form, state="readonly", width=14)
         self._from_block.grid(row=0, column=1, padx=(4, 2))
         self._from_block.bind("<<ComboboxSelected>>",
                               lambda e: self._refresh_from_ports())
@@ -50,56 +51,25 @@ class TabEdges(tk.Frame):
         # Куда: блок + порт
         tk.Label(form, text="Куда", font=_FONT, bg=_CLR_BG, width=6).grid(
             row=0, column=3, sticky="w")
-        self._to_block = ttk.Combobox(form, state="readonly", width=10)
+        self._to_block = ttk.Combobox(form, state="readonly", width=14)
         self._to_block.grid(row=0, column=4, padx=(4, 2))
         self._to_block.bind("<<ComboboxSelected>>",
                             lambda e: self._refresh_to_ports())
         self._to_port = ttk.Combobox(form, state="readonly", width=14)
         self._to_port.grid(row=0, column=5, padx=(2, 12))
 
-        # Тип связи
-        tk.Label(form, text="Тип", font=_FONT, bg=_CLR_BG).grid(
-            row=0, column=6, sticky="w")
-        self._edge_type = ttk.Combobox(
-            form, state="readonly", width=14,
-            values=[t.value for t in EdgeType],
-        )
-        self._edge_type.set(EdgeType.NORMAL.value)
-        self._edge_type.grid(row=0, column=7, padx=(4, 12))
-
         # Тип детали
         tk.Label(form, text="Деталь", font=_FONT, bg=_CLR_BG).grid(
+            row=0, column=6, sticky="w")
+        self._detail_type = ttk.Combobox(form, state="readonly", width=20)
+        self._detail_type.grid(row=0, column=7, padx=(4, 12))
+
+        # Комментарий
+        tk.Label(form, text="Комментарий", font=_FONT, bg=_CLR_BG).grid(
             row=0, column=8, sticky="w")
-        self._detail_type = ttk.Combobox(form, state="readonly", width=14)
-        self._detail_type.grid(row=0, column=9, padx=(4, 12))
-
-        # Вторая строка: поля брака (показываются только для return-рёбер)
-        self._defect_frame = tk.Frame(outer, bg=_CLR_BG)
-        self._defect_frame.pack(fill="x", pady=(0, 8))
-
-        tk.Label(self._defect_frame, text="Исправимость:",
-                 font=_FONT, bg=_CLR_BG).pack(side="left")
-        self._defect_type = ttk.Combobox(
-            self._defect_frame, state="readonly", width=14,
-            values=["repairable", "scrap"],
-        )
-        self._defect_type.set("repairable")
-        self._defect_type.pack(side="left", padx=(4, 16))
-
-        tk.Label(self._defect_frame, text="Время ремонта (мин):",
-                 font=_FONT, bg=_CLR_BG).pack(side="left")
-        self._repair_time = tk.Spinbox(
-            self._defect_frame, from_=0, to=9999, width=8, font=_FONT)
-        self._repair_time.pack(side="left", padx=(4, 16))
-
-        tk.Label(self._defect_frame, text="Комментарий:",
-                 font=_FONT, bg=_CLR_BG).pack(side="left")
         self._comment_var = tk.StringVar()
-        tk.Entry(self._defect_frame, textvariable=self._comment_var,
-                 font=_FONT, width=22).pack(side="left", padx=(4, 0))
-
-        self._edge_type.bind("<<ComboboxSelected>>",
-                             lambda e: self._toggle_defect_fields())
+        tk.Entry(form, textvariable=self._comment_var,
+                 font=_FONT, width=20).grid(row=0, column=9, padx=(4, 0))
 
         # Кнопки управления связями
         btn_row = tk.Frame(outer, bg=_CLR_BG)
@@ -126,7 +96,7 @@ class TabEdges(tk.Frame):
         # ── Таблица связей ──────────────────────────────────────────────────
         self._build_section_label(outer, "Связи участка")
 
-        cols = ("id", "from", "to", "detail", "type", "back", "repair")
+        cols = ("id", "from", "to", "detail", "back")
         self._tree = ttk.Treeview(
             outer, columns=cols, show="headings", height=14,
             selectmode="browse",
@@ -135,17 +105,13 @@ class TabEdges(tk.Frame):
         self._tree.heading("from",   text="Откуда")
         self._tree.heading("to",     text="Куда")
         self._tree.heading("detail", text="Деталь")
-        self._tree.heading("type",   text="Тип связи")
         self._tree.heading("back",   text="Обратная?")
-        self._tree.heading("repair", text="Ремонт (мин)")
 
         self._tree.column("id",     width=50,  anchor="center")
-        self._tree.column("from",   width=150)
-        self._tree.column("to",     width=150)
-        self._tree.column("detail", width=110, anchor="center")
-        self._tree.column("type",   width=120, anchor="center")
-        self._tree.column("back",   width=80,  anchor="center")
-        self._tree.column("repair", width=100, anchor="center")
+        self._tree.column("from",   width=200)
+        self._tree.column("to",     width=200)
+        self._tree.column("detail", width=180, anchor="center")
+        self._tree.column("back",   width=90,  anchor="center")
 
         self._tree.tag_configure("back", background=_CLR_BACK,
                                  foreground="#843C0C")
@@ -163,16 +129,6 @@ class TabEdges(tk.Frame):
                  fg=_CLR_HDR).pack(side="left")
         tk.Frame(f, bg="#D3D1C7", height=1).pack(
             side="left", fill="x", expand=True, padx=(8, 0), pady=6)
-
-    def _toggle_defect_fields(self):
-        """Показывает/скрывает поля брака: активны только для RETURN-рёбер."""
-        is_return = self._edge_type.get() == EdgeType.RETURN.value
-        state = "normal" if is_return else "disabled"
-        for w in self._defect_frame.winfo_children():
-            try:
-                w.configure(state=state)
-            except tk.TclError:
-                pass
 
     def _refresh_from_ports(self):
         bid = self._from_block.get().split(":")[0].strip()
@@ -199,33 +155,51 @@ class TabEdges(tk.Frame):
         ]
         self._from_block["values"] = block_labels
         self._to_block["values"]   = block_labels
-        detail_ids = list(self.app.model.detail_types.keys())
-        self._detail_type["values"] = detail_ids
-        if detail_ids:
-            self._detail_type.set(detail_ids[0])
+
+        # Показываем деталь как «ID: Название»
+        detail_items = [
+            f"{did}: {info.get('label', did)}"
+            for did, info in self.app.model.detail_types.items()
+        ]
+        self._detail_type["values"] = detail_items
+        if detail_items:
+            self._detail_type.set(detail_items[0])
 
     def _refresh_table(self):
         for item in self._tree.get_children():
             self._tree.delete(item)
         for edge in self.app.model.edges.values():
             tags = ("back",) if edge.is_back_edge else ()
+            # Показываем деталь как «ID: Название» если возможно
+            det_label = self._detail_display(edge.detail_type)
             self._tree.insert(
                 "", "end", iid=edge.id,
                 values=(
                     edge.id,
                     f"{edge.from_block}.{edge.from_port}",
                     f"{edge.to_block}.{edge.to_port}",
-                    edge.detail_type,
-                    edge.edge_type.value,
+                    det_label,
                     "да ↻" if edge.is_back_edge else "—",
-                    edge.repair_time_min if edge.is_back_edge else "—",
                 ),
                 tags=tags,
             )
 
+    def _detail_display(self, detail_id: str) -> str:
+        """Формирует строку 'ID: Название' для отображения."""
+        if not detail_id:
+            return "—"
+        info = self.app.model.detail_types.get(detail_id)
+        if info:
+            return f"{detail_id}: {info.get('label', detail_id)}"
+        return detail_id
+
+    def _detail_id_from_combo(self, combo_val: str) -> str:
+        """Извлекает ID детали из строки 'ID: Название'."""
+        return combo_val.split(":")[0].strip() if combo_val else ""
+
     def _add_edge(self):
-        from_str = self._from_block.get().split(":")[0].strip()
-        to_str   = self._to_block.get().split(":")[0].strip()
+        from_str  = self._from_block.get().split(":")[0].strip()
+        to_str    = self._to_block.get().split(":")[0].strip()
         from_port = self._from_port.get().strip()
         to_port   = self._to_port.get().strip()
 
@@ -234,21 +208,12 @@ class TabEdges(tk.Frame):
                 "Заполните все поля связи (блок + порт).", parent=self)
             return
 
-        edge_type = EdgeType(self._edge_type.get())
-        detail    = self._detail_type.get()
-        defect    = self._defect_type.get()
-        try:
-            repair = float(self._repair_time.get())
-        except ValueError:
-            repair = 0.0
+        detail  = self._detail_id_from_combo(self._detail_type.get())
         comment = self._comment_var.get()
 
         self.app.model.add_edge(
             from_str, from_port, to_str, to_port,
-            edge_type=edge_type,
             detail_type=detail,
-            defect_type=defect,
-            repair_time_min=repair,
             comment=comment,
         )
         self._refresh_table()
@@ -275,30 +240,31 @@ class TabEdges(tk.Frame):
         edge = self.app.model.edges.get(eid)
         if not edge:
             return
-        # Устанавливаем блоки
+
         def _find_label(bid):
             for v in self._from_block["values"]:
                 if v.startswith(bid + ":"):
                     return v
             return bid
+
         self._from_block.set(_find_label(edge.from_block))
         self._refresh_from_ports()
         self._from_port.set(edge.from_port)
         self._to_block.set(_find_label(edge.to_block))
         self._refresh_to_ports()
         self._to_port.set(edge.to_port)
-        self._edge_type.set(edge.edge_type.value)
-        self._detail_type.set(edge.detail_type)
-        self._defect_type.set(edge.defect_type)
-        self._repair_time.delete(0, "end")
-        self._repair_time.insert(0, str(edge.repair_time_min))
+
+        # Устанавливаем деталь в формате «ID: Название»
+        det_combo = self._detail_display(edge.detail_type)
+        if det_combo in self._detail_type["values"]:
+            self._detail_type.set(det_combo)
+
         self._comment_var.set(edge.comment)
-        self._toggle_defect_fields()
         self._editing_eid = eid
 
     def _apply_edit(self):
         """Удаляет старую связь и создаёт новую с обновлёнными данными."""
-        eid = getattr(self, "_editing_eid", None)
+        eid = self._editing_eid
         if not eid or eid not in self.app.model.edges:
             return
         self.app.model.remove_edge(eid)
@@ -307,7 +273,6 @@ class TabEdges(tk.Frame):
     def on_activate(self):
         self._refresh_combos()
         self._refresh_table()
-        self._toggle_defect_fields()
 
     def validate(self) -> bool:
         if not self.app.model.edges:
