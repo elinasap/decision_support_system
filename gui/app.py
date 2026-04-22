@@ -17,7 +17,7 @@ gui/app.py
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-from model import Model, BlockType, EdgeType
+from model import Model, BlockType
 from gui.tab_blocks import TabBlocks
 from gui.tab_edges  import TabEdges
 from gui.tab_schema import TabSchema

@@ -147,7 +147,7 @@ def _sheet_edges(wb: Workbook, model: Model) -> None:
     ws.sheet_view.showGridLines = False
 
     headers = ["ID", "Откуда", "Куда", "Тип детали",
-               "Тип связи", "Обратная?", "Исправимость", "Время ремонта (мин)", "Комментарий"]
+               "Обратная?", "Исправимость", "Время ремонта (сек)", "Комментарий"]
     for col, h in enumerate(headers, 1):
         _hdr(ws.cell(1, col), h)
     ws.row_dimensions[1].height = 22
@@ -161,15 +161,14 @@ def _sheet_edges(wb: Workbook, model: Model) -> None:
         _cell(ws.cell(row, 2), f"{edge.from_block}.{edge.from_port}",fill=fill, color=color)
         _cell(ws.cell(row, 3), f"{edge.to_block}.{edge.to_port}",    fill=fill, color=color)
         _cell(ws.cell(row, 4), edge.detail_type,                     fill=fill, align=_CTR)
-        _cell(ws.cell(row, 5), edge.edge_type.value,                 fill=fill, align=_CTR)
-        _cell(ws.cell(row, 6), "да" if is_back else "—",             fill=fill, align=_CTR,
+        _cell(ws.cell(row, 5), "да ↻" if is_back else "—",          fill=fill, align=_CTR,
               bold=is_back, color=color)
-        _cell(ws.cell(row, 7), edge.defect_type if is_back else "—", fill=fill, align=_CTR)
-        _cell(ws.cell(row, 8), edge.repair_time_min if is_back else "—", fill=fill, align=_CTR)
-        _cell(ws.cell(row, 9), edge.comment,                         fill=fill)
+        _cell(ws.cell(row, 6), edge.defect_type if is_back else "—", fill=fill, align=_CTR)
+        _cell(ws.cell(row, 7), edge.repair_time_sec if is_back else "—", fill=fill, align=_CTR)
+        _cell(ws.cell(row, 8), edge.comment,                         fill=fill)
         ws.row_dimensions[row].height = 20
 
-    for col, w in enumerate([8, 20, 20, 14, 16, 12, 14, 20, 28], 1):
+    for col, w in enumerate([8, 20, 20, 14, 12, 14, 20, 28], 1):
         _col(ws, col, w)
     ws.freeze_panes = "A2"
 

@@ -1,10 +1,7 @@
 """
 validation/validator.py
 
-Четыре уровня валидации модели — точно по блок-схеме (стр. 7).
-
-Каждая функция проверяет один уровень и возвращает ValidationResult.
-Главная функция validate() запускает их по порядку и объединяет итог.
+Четыре уровня валидации модели.
 
 Порядок проверок:
   1. check_ports      — все ли порты подключены?
@@ -18,17 +15,10 @@ from .result import ValidationResult
 
 
 # ══════════════════════════════════════════════════════════════════
-# Уровень 1 — Порты: есть ли необработанные / ожидающие?
+# Уровень 1 — Порты: есть ли неподключённые?
 # ══════════════════════════════════════════════════════════════════
 
 def check_ports(model: Model) -> ValidationResult:
-    """
-    Проверяет: нет ли портов, которые не подключены ни к одной связи.
-
-    SOURCE не обязан иметь входных портов — это норма.
-    STORAGE не обязан иметь выходных портов — это норма.
-    Все остальные блоки должны иметь все порты подключены.
-    """
     result = ValidationResult()
 
     for block in model.blocks.values():
@@ -36,14 +26,11 @@ def check_ports(model: Model) -> ValidationResult:
         if not unused:
             continue
 
-        # Исключения: source без входа, storage без выхода
         filtered = []
         for port in unused:
             if block.type == BlockType.SOURCE and port.startswith("in"):
                 continue
             if block.type == BlockType.SINK and port.startswith("out"):
-                continue
-            if block.type == BlockType.PROCESS and port == "in_rework":
                 continue
             filtered.append(port)
 
@@ -60,14 +47,6 @@ def check_ports(model: Model) -> ValidationResult:
 # ══════════════════════════════════════════════════════════════════
 
 def check_edges(model: Model) -> ValidationResult:
-    """
-    Проверяет допустимость всех связей:
-      - нет ли дублирующих связей (одинаковые from/to порты)
-      - нет ли петли на себя (блок → тот же блок)
-      - нет ли запрещённых соединений (out → out, in → in)
-      - корректны ли направления потоков (out → in)
-      - не более одной входящей связи на каждый входной порт (§11 ограничение 1)
-    """
     result = ValidationResult()
     seen_pairs: set[tuple] = set()
     in_port_count: dict[tuple, int] = {}
@@ -77,21 +56,16 @@ def check_edges(model: Model) -> ValidationResult:
         in_port_count[key] = in_port_count.get(key, 0) + 1
         pair = (edge.from_block, edge.from_port, edge.to_block, edge.to_port)
 
-        # Дублирующие связи
         if pair in seen_pairs:
-            result.add_error(
-                f"Дублирующая связь: {edge.display_name()}"
-            )
+            result.add_error(f"Дублирующая связь: {edge.display_name()}")
         seen_pairs.add(pair)
 
-        # Петля на себя
         if edge.from_block == edge.to_block:
             result.add_error(
                 f"Связь {edge.id}: блок не может соединяться сам с собой "
                 f"({edge.from_block})"
             )
 
-        # Направление: исходящий порт → входящий порт
         if not edge.from_port.startswith("out"):
             result.add_error(
                 f"Связь {edge.id}: источник должен быть выходным портом, "
@@ -103,15 +77,26 @@ def check_edges(model: Model) -> ValidationResult:
                 f"получен '{edge.to_port}'"
             )
 
-        # Блоки существуют
         if edge.from_block not in model.blocks:
-            result.add_error(
-                f"Связь {edge.id}: блок '{edge.from_block}' не существует"
-            )
+            result.add_error(f"Связь {edge.id}: блок '{edge.from_block}' не существует")
         if edge.to_block not in model.blocks:
-            result.add_error(
-                f"Связь {edge.id}: блок '{edge.to_block}' не существует"
-            )
+            result.add_error(f"Связь {edge.id}: блок '{edge.to_block}' не существует")
+
+        # Проверка совместимости типа детали с блоком-получателем (формализация п.6, ограничение №4)
+        if edge.detail_type and edge.to_block in model.blocks:
+            to_block = model.blocks[edge.to_block]
+            allowed = set()
+            allowed.add(to_block.params.get("detail_type", ""))
+            allowed.add(to_block.params.get("input_type", ""))
+            for t in to_block.params.get("input_types", []):
+                allowed.add(t)
+            allowed.discard("")
+            if allowed and edge.detail_type not in allowed:
+                result.add_error(
+                    f"Связь {edge.id}: тип детали '{edge.detail_type}' не совместим "
+                    f"с блоком-получателем {to_block.display_name()} "
+                    f"(ожидается один из: {', '.join(sorted(allowed))})"
+                )
 
     # Ограничение §11.1: один входной порт — не более одной входящей связи
     for (block_id, port), count in in_port_count.items():
@@ -128,15 +113,6 @@ def check_edges(model: Model) -> ValidationResult:
 # ══════════════════════════════════════════════════════════════════
 
 def check_operations(model: Model) -> ValidationResult:
-    """
-    Проверяет корректность блоков технологических операций:
-      - у PROCESS один вход
-      - у ASSEMBLY больше одного входа
-      - задано время операции
-      - сформированы требуемые выходы
-      - нет противоречий по типам деталей
-      - в модели есть хотя бы один SOURCE и один SINK (§11 ограничение 5)
-    """
     result = ValidationResult()
 
     has_source = any(b.type == BlockType.SOURCE for b in model.blocks.values())
@@ -149,17 +125,16 @@ def check_operations(model: Model) -> ValidationResult:
     for block in model.blocks.values():
 
         if block.type == BlockType.PROCESS:
-            regular_inputs = [p for p in block.ports.in_ports if p != "in_rework"]
-            if len(regular_inputs) != 1:
+            if len(block.ports.in_ports) != 1:
                 result.add_error(
                     f"Блок {block.display_name()}: операция должна иметь ровно 1 вход"
                 )
-            if "operation_time_min" not in block.params:
+            if "operation_time_sec" not in block.params:
                 result.add_error(
                     f"Блок {block.display_name()}: не задано время операции "
-                    f"(operation_time_min)"
+                    f"(operation_time_sec)"
                 )
-            elif block.params["operation_time_min"] <= 0:
+            elif block.params["operation_time_sec"] <= 0:
                 result.add_error(
                     f"Блок {block.display_name()}: время операции должно быть > 0"
                 )
@@ -167,6 +142,18 @@ def check_operations(model: Model) -> ValidationResult:
                 result.add_error(
                     f"Блок {block.display_name()}: нет ни одного выходного порта"
                 )
+            # out_defect требует has_internal_control=True и defect_rate
+            if "out_defect" in block.ports.out_ports:
+                if not block.params.get("has_internal_control", False):
+                    result.add_error(
+                        f"Блок {block.display_name()}: порт out_defect есть, но "
+                        f"has_internal_control не установлен"
+                    )
+                if "defect_rate" not in block.params:
+                    result.add_error(
+                        f"Блок {block.display_name()}: has_internal_control=True, "
+                        f"но не задан defect_rate"
+                    )
 
         if block.type == BlockType.ASSEMBLY:
             if len(block.ports.in_ports) < 2:
@@ -174,19 +161,19 @@ def check_operations(model: Model) -> ValidationResult:
                     f"Блок {block.display_name()}: сборка должна иметь >= 2 входов, "
                     f"задано {len(block.ports.in_ports)}"
                 )
-            if "operation_time_min" not in block.params:
+            if "operation_time_sec" not in block.params:
                 result.add_error(
                     f"Блок {block.display_name()}: не задано время сборки "
-                    f"(operation_time_min)"
+                    f"(operation_time_sec)"
                 )
 
         if block.type == BlockType.TRANSPORT:
-            if "time_min" not in block.params:
+            if "time_sec" not in block.params:
                 result.add_error(
                     f"Блок {block.display_name()}: не задано время транспортировки "
-                    f"(time_min)"
+                    f"(time_sec)"
                 )
-            elif block.params["time_min"] < 0:
+            elif block.params["time_sec"] < 0:
                 result.add_error(
                     f"Блок {block.display_name()}: время транспортировки не может "
                     f"быть отрицательным"
@@ -206,17 +193,8 @@ def check_operations(model: Model) -> ValidationResult:
 # ══════════════════════════════════════════════════════════════════
 
 def check_control(model: Model) -> ValidationResult:
-    """
-    Проверяет корректность блоков контроля:
-      - если у блока есть out_defect — должна быть связь с него
-        (маршрут дефектной продукции задан)
-      - если задано extra_time_min > 0 — это допустимо, просто проверяем
-        что значение не отрицательное
-      - процент брака в диапазоне [0, 1)
-    """
     result = ValidationResult()
 
-    # Собираем какие out-порты реально подключены
     connected_out: set[tuple] = set()
     for edge in model.edges.values():
         connected_out.add((edge.from_block, edge.from_port))
@@ -225,7 +203,6 @@ def check_control(model: Model) -> ValidationResult:
         if block.type != BlockType.CONTROL:
             continue
 
-        # Маршрут бракованной продукции
         if "out_defect" in block.ports.out_ports:
             if (block.id, "out_defect") not in connected_out:
                 result.add_error(
@@ -233,7 +210,6 @@ def check_control(model: Model) -> ValidationResult:
                     f"маршрут бракованной продукции не задан"
                 )
 
-        # Доля брака
         defect_prob = block.params.get("defect_prob")
         if defect_prob is None:
             result.add_error(
@@ -245,7 +221,6 @@ def check_control(model: Model) -> ValidationResult:
                 f"[0, 1), получено {defect_prob}"
             )
 
-        # Порог контроля
         threshold = block.params.get("threshold")
         if threshold is None:
             result.add_error(
@@ -261,19 +236,10 @@ def check_control(model: Model) -> ValidationResult:
 
 
 # ══════════════════════════════════════════════════════════════════
-# Главная функция — запускает все уровни по порядку
+# Главная функция
 # ══════════════════════════════════════════════════════════════════
 
 def validate(model: Model) -> ValidationResult:
-    """
-    Запускает все четыре уровня валидации и возвращает объединённый результат.
-
-    Порядок соответствует блок-схеме (стр. 7 диплома):
-    порты → связи → операции → контроль.
-
-    Все уровни выполняются всегда — оператор видит полный список
-    проблем за один раз, а не по одной ошибке за запуск.
-    """
     final = ValidationResult()
     final.merge(check_ports(model))
     final.merge(check_edges(model))
