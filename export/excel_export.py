@@ -91,20 +91,22 @@ def _sheet_details(wb: Workbook, model: Model) -> None:
     ws = wb.create_sheet("1_Типы деталей")
     ws.sheet_view.showGridLines = False
 
-    headers = ["ID детали", "Наименование", "Единица измерения", "Примечание"]
+    headers = ["ID детали", "Наименование", "Единица измерения",
+               "Макс. ремонтов", "Примечание"]
     for col, h in enumerate(headers, 1):
         _hdr(ws.cell(1, col), h)
     ws.row_dimensions[1].height = 22
 
     for row, (det_id, det) in enumerate(model.detail_types.items(), 2):
         fill = _ROW_ODD if row % 2 == 1 else _ROW_EVEN
-        _cell(ws.cell(row, 1), det_id,                   bold=True, fill=fill)
-        _cell(ws.cell(row, 2), det.get("label", ""),     fill=fill)
-        _cell(ws.cell(row, 3), det.get("unit", "шт"),    fill=fill, align=_CTR)
-        _cell(ws.cell(row, 4), det.get("note", ""),      fill=fill)
+        _cell(ws.cell(row, 1), det_id,                        bold=True, fill=fill)
+        _cell(ws.cell(row, 2), det.get("label", ""),          fill=fill)
+        _cell(ws.cell(row, 3), det.get("unit", "шт"),         fill=fill, align=_CTR)
+        _cell(ws.cell(row, 4), det.get("max_repair", 0),      fill=fill, align=_CTR)
+        _cell(ws.cell(row, 5), det.get("note", ""),           fill=fill)
         ws.row_dimensions[row].height = 20
 
-    for col, w in enumerate([18, 32, 20, 30], 1):
+    for col, w in enumerate([18, 32, 20, 16, 30], 1):
         _col(ws, col, w)
     ws.freeze_panes = "A2"
 

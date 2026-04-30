@@ -11,7 +11,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
 from validation import validate
-from export import export_excel, export_json
+from export import export_excel, export_json, import_excel, import_json
 
 
 _CLR_BG    = "#F8F7F5"
@@ -86,6 +86,36 @@ class TabExport(tk.Frame):
         self._save_status = tk.StringVar(value="")
         tk.Label(
             outer, textvariable=self._save_status,
+            font=("Arial", 9), bg=_CLR_BG, fg="#3B6D11",
+        ).pack(anchor="w", pady=(8, 0))
+
+        # ── Секция: загрузка ────────────────────────────────────────────────
+        self._build_section_label(outer, "Загрузить")
+
+        load_area = tk.Frame(outer, bg=_CLR_BG)
+        load_area.pack(fill="x", pady=(8, 0))
+
+        tk.Button(
+            load_area,
+            text="↑  Загрузить Excel (.xlsx)",
+            font=_FONT_BOLD, relief="flat",
+            bg="#1E6B3B", fg="white",
+            activebackground="#155130", activeforeground="white",
+            padx=16, pady=8, cursor="hand2",
+            command=self._load_excel,
+        ).pack(side="left")
+
+        tk.Button(
+            load_area,
+            text="↑  Загрузить JSON (.json)",
+            font=_FONT, relief="flat",
+            bg=_CLR_BG, padx=16, pady=8, cursor="hand2",
+            command=self._load_json,
+        ).pack(side="left", padx=(12, 0))
+
+        self._load_status = tk.StringVar(value="")
+        tk.Label(
+            outer, textvariable=self._load_status,
             font=("Arial", 9), bg=_CLR_BG, fg="#3B6D11",
         ).pack(anchor="w", pady=(8, 0))
 
@@ -172,6 +202,52 @@ class TabExport(tk.Frame):
             self.app.set_status(f"JSON: {path}")
         except Exception as e:
             messagebox.showerror("Ошибка", f"Не удалось сохранить:\n{e}",
+                                 parent=self)
+
+    def _load_excel(self):
+        path = filedialog.askopenfilename(
+            filetypes=[("Excel files", "*.xlsx")],
+            title="Открыть Excel-файл модели",
+            parent=self,
+        )
+        if not path:
+            return
+        if not messagebox.askyesno(
+            "Загрузить файл",
+            "Текущая модель будет заменена данными из файла.\nПродолжить?",
+            parent=self,
+        ):
+            return
+        try:
+            model = import_excel(path)
+            self.app.replace_model(model)
+            self._load_status.set(f"✓ Загружено из Excel: {path}")
+            self.app.set_status(f"Импорт Excel: {path}")
+        except Exception as e:
+            messagebox.showerror("Ошибка загрузки", f"Не удалось загрузить файл:\n{e}",
+                                 parent=self)
+
+    def _load_json(self):
+        path = filedialog.askopenfilename(
+            filetypes=[("JSON files", "*.json")],
+            title="Открыть JSON-файл модели",
+            parent=self,
+        )
+        if not path:
+            return
+        if not messagebox.askyesno(
+            "Загрузить файл",
+            "Текущая модель будет заменена данными из файла.\nПродолжить?",
+            parent=self,
+        ):
+            return
+        try:
+            model = import_json(path)
+            self.app.replace_model(model)
+            self._load_status.set(f"✓ Загружено из JSON: {path}")
+            self.app.set_status(f"Импорт JSON: {path}")
+        except Exception as e:
+            messagebox.showerror("Ошибка загрузки", f"Не удалось загрузить файл:\n{e}",
                                  parent=self)
 
     def on_activate(self):

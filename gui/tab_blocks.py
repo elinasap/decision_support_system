@@ -74,6 +74,14 @@ class TabBlocks(tk.Frame):
         self._det_unit.set("шт")
         self._det_unit.pack(side="left", padx=(4, 10))
 
+        tk.Label(row_in, text="Макс. ремонтов", font=_FONT, bg=_CLR_BG).pack(side="left")
+        self._det_max_repair = tk.Spinbox(
+            row_in, from_=0, to=99, font=_FONT, width=5,
+        )
+        self._det_max_repair.delete(0, "end")
+        self._det_max_repair.insert(0, "0")
+        self._det_max_repair.pack(side="left", padx=(4, 10))
+
         tk.Button(
             row_in, text="+ Добавить", font=_FONT, relief="flat",
             bg="#534AB7", fg="white", padx=8, pady=2, cursor="hand2",
@@ -152,6 +160,10 @@ class TabBlocks(tk.Frame):
         det_id    = self._det_id.get().strip()
         det_label = self._det_label.get().strip()
         det_unit  = self._det_unit.get().strip() or "шт"
+        try:
+            det_max_repair = int(self._det_max_repair.get())
+        except (ValueError, TypeError):
+            det_max_repair = 0
 
         if not det_id:
             messagebox.showwarning("Ошибка", "Введите ID детали", parent=self)
@@ -162,7 +174,7 @@ class TabBlocks(tk.Frame):
             return
 
         self.app.model.detail_types[det_id] = {
-            "label": det_label, "unit": det_unit
+            "label": det_label, "unit": det_unit, "max_repair": det_max_repair,
         }
         self._det_id.delete(0, "end")
         self._det_label.delete(0, "end")

@@ -212,3 +212,14 @@ class App(tk.Tk):
         schema_tab = self._tabs.get("schema")
         if schema_tab and hasattr(schema_tab, "mark_dirty"):
             schema_tab.mark_dirty()
+
+    def replace_model(self, new_model) -> None:
+        """
+        Заменяет текущую модель и обновляет все вкладки.
+        Вызывается после импорта из файла.
+        """
+        self.model = new_model
+        for tab in self._tabs.values():
+            if hasattr(tab, "on_activate"):
+                tab.on_activate()
+        self.refresh_model()
