@@ -150,6 +150,10 @@ class Simulator:
         # detail_types из модели (для max_repair и т.п.)
         self._detail_types: dict[str, dict] = {}
 
+        # Детали, ожидающие входа в буфер: buf_id → [(uid, type_id, source_id)]
+        # Заполняется когда SOURCE пытается поместить деталь в полный буфер.
+        self._pending_arrivals: dict[str, list[tuple[int, str, str]]] = {}
+
     # ══════════════════════════════════════════════════════════
     # Публичный API
     # ══════════════════════════════════════════════════════════
@@ -243,13 +247,30 @@ class Simulator:
                 downstream_buf = self._find_downstream_buffer(bid)
 
                 if downstream_buf is None:
-                    # Если downstream — не буфер (например, напрямую в sink),
-                    # создаём виртуальный буфер с бесконечной ёмкостью
+                    # Если downstream — не буфер (ТО→ТО или ТО→SINK),
+                    # создаём виртуальный буфер с бесконечной ёмкостью.
                     vbuf_id = f"_vbuf_{bid}"
                     vbuf_state = BufferState(block_id=vbuf_id, capacity=999999)
                     self._buffers[vbuf_id] = BufferRuntime(
                         block_id=vbuf_id, state=vbuf_state)
                     downstream_buf = self._buffers[vbuf_id]
+
+                    # 1. Синтетическое ребро bid → vbuf_id:
+                    #    _find_normal_target(bid) найдёт виртуальный буфер
+                    #    как правомерную цель.
+                    syn = {"from_block": bid, "from_port": "out",
+                           "to_block": vbuf_id, "to_port": "in",
+                           "is_back_edge": False}
+                    self._outgoing.setdefault(bid, []).insert(0, syn)
+                    self._incoming.setdefault(vbuf_id, []).append(syn)
+
+                    # 2. Исходящие рёбра bid копируем на vbuf_id:
+                    #    _try_start_downstream(vbuf_id) найдёт следующий блок,
+                    #    _drain_buffer_to_sinks(vbuf_id) найдёт SINK.
+                    for edge in list(self._outgoing.get(bid, []))[1:]:
+                        virt = dict(edge, from_block=vbuf_id)
+                        self._outgoing.setdefault(vbuf_id, []).append(virt)
+                        self._incoming.setdefault(edge["to_block"], []).append(virt)
 
                 op_state = BlockOperationState(
                     block_id=bid,
@@ -392,34 +413,37 @@ class Simulator:
         Деталь порождена из SOURCE.
 
         Действия:
-        1. Создать DetailRuntime
-        2. Найти первый буфер после SOURCE
-        3. Положить деталь в буфер
-        4. Если downstream-блок свободен — запланировать SERVICE_STARTED
+        1. Найти первый буфер после SOURCE
+        2. Если буфер полон — встать в очередь ожидания (_pending_arrivals)
+        3. Иначе — создать DetailRuntime, положить в буфер, будить downstream
         """
         uid = event.detail_uid
         type_id = event.data["type_id"]
-
-        # Создать экземпляр детали
-        instance = DetailInstance(
-            uid=uid,
-            type_id=type_id,
-            created_at=self._clock,
-        )
-        detail_rt = DetailRuntime(instance=instance)
-        self._details[uid] = detail_rt
-        self._metrics.detail_created()
+        source_id = event.block_id
 
         # Найти буфер после SOURCE
-        source_id = event.block_id
         target_buf = self._find_first_buffer_after(source_id)
         if target_buf is None:
             return  # некуда класть деталь (ошибка конфигурации)
 
-        # Положить деталь в буфер
-        self._push_to_buffer(target_buf, detail_rt, self._clock)
+        # Буфер полон — встаём в очередь; деталь войдёт когда освободится место
+        if target_buf.state.is_full:
+            self._pending_arrivals.setdefault(target_buf.block_id, []).append(
+                (uid, type_id, source_id)
+            )
+            return
 
-        # Попробовать запустить downstream-блок
+        self._admit_detail(uid, type_id, target_buf)
+
+    def _admit_detail(self, uid: int, type_id: str,
+                      target_buf: "BufferRuntime") -> None:
+        """Создать DetailRuntime и положить деталь в буфер."""
+        instance = DetailInstance(uid=uid, type_id=type_id, created_at=self._clock)
+        detail_rt = DetailRuntime(instance=instance)
+        self._details[uid] = detail_rt
+        self._metrics.detail_created()
+
+        self._push_to_buffer(target_buf, detail_rt, self._clock)
         self._try_start_downstream(target_buf.block_id)
 
     def _handle_service_started(self, event: SimEvent) -> None:
@@ -642,7 +666,18 @@ class Simulator:
         # Если буфер освободил место — разбудить upstream-блок
         self._notify_upstream_unblock(buf_rt.block_id)
 
+        # Впустить следующую деталь из очереди SOURCE (если есть)
+        self._admit_pending(buf_rt)
+
         return detail
+
+    def _admit_pending(self, buf_rt: "BufferRuntime") -> None:
+        """Если есть детали, ожидающие входа в этот буфер, впустить одну."""
+        pending = self._pending_arrivals.get(buf_rt.block_id)
+        if not pending or buf_rt.state.is_full:
+            return
+        uid, type_id, _source_id = pending.pop(0)
+        self._admit_detail(uid, type_id, buf_rt)
 
     def _drain_buffer_to_sinks(self, buf_rt: BufferRuntime) -> None:
         """

@@ -18,18 +18,20 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 from model import Model, BlockType
-from gui.tab_blocks import TabBlocks
-from gui.tab_edges  import TabEdges
-from gui.tab_schema import TabSchema
-from gui.tab_export import TabExport
+from gui.tab_blocks      import TabBlocks
+from gui.tab_edges       import TabEdges
+from gui.tab_schema      import TabSchema
+from gui.tab_export      import TabExport
+from gui.tab_simulation  import TabSimulation
 
 
 # Порядок вкладок
 _TABS = [
-    ("1. Детали и блоки", "blocks"),
-    ("2. Связи",          "edges"),
-    ("3. Схема",          "schema"),
-    ("4. Экспорт",        "export"),
+    ("1. Детали и блоки",        "blocks"),
+    ("2. Связи",                 "edges"),
+    ("3. Схема",                 "schema"),
+    ("4. Экспорт",               "export"),
+    ("5. Симуляция",             "simulation"),
 ]
 
 # Цвета
@@ -99,10 +101,11 @@ class App(tk.Tk):
 
         # Создаём содержимое каждой вкладки
         self._tabs: dict[str, object] = {
-            "blocks": TabBlocks(self._tab_frames["blocks"], self),
-            "edges":  TabEdges( self._tab_frames["edges"],  self),
-            "schema": TabSchema(self._tab_frames["schema"], self),
-            "export": TabExport(self._tab_frames["export"], self),
+            "blocks":     TabBlocks(    self._tab_frames["blocks"],     self),
+            "edges":      TabEdges(     self._tab_frames["edges"],      self),
+            "schema":     TabSchema(    self._tab_frames["schema"],     self),
+            "export":     TabExport(    self._tab_frames["export"],     self),
+            "simulation": TabSimulation(self._tab_frames["simulation"], self),
         }
 
     def _build_nav_buttons(self, nav: tk.Frame):
@@ -172,8 +175,10 @@ class App(tk.Tk):
         self._btn_back.configure(
             state="normal" if index > 0 else "disabled"
         )
+        is_last = (index == len(_TABS) - 1)
         self._btn_next.configure(
-            text="Далее →" if index < len(_TABS) - 1 else "Готово"
+            text="Готово" if is_last else "Далее →",
+            state="disabled" if is_last else "normal",
         )
 
         # Уведомляем вкладку что она стала активной
