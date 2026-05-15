@@ -52,6 +52,10 @@ class BlockOperationState:
     total_busy_time: float = 0.0
     total_blocked_time: float = 0.0
     total_idle_time: float = 0.0
+    total_maintenance_time: float = 0.0   # суммарное время в MAINTENANCE
+    failure_count: int = 0                # сколько раз произошёл отказ
+    last_failure_time: Optional[float] = None
+    interrupted_detail: Any = None        # деталь, прерванная отказом
 
     @property
     def has_upstream_detail(self) -> bool:

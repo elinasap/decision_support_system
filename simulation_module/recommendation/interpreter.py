@@ -24,7 +24,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from simulation.result import SimulationResult
+from typing import Optional
+from simulation.result import SimulationResult, BlockMetrics
 from recommendation.diagnosis import DiagnosisResult, Sign, SEVERITY_RED, SEVERITY_YELLOW
 
 
@@ -33,17 +34,23 @@ from recommendation.diagnosis import DiagnosisResult, Sign, SEVERITY_RED, SEVERI
 
 _CT_IMPACT_PRIORITY: dict[str, int] = {
     "overload_and_blockage": 1,
-    "overload":              2,
-    "downstream_jam":        3,
-    "logistics_jam":         4,
-    "overflow":              5,
-    "blockage":              6,
-    "long_queue":            7,
-    "long_cycle":            8,
-    "low_throughput":        9,
-    "high_defect_rate":      10,
-    "idle":                  11,
-    "starvation":            12,
+    "flow_imbalance":        2,
+    "overload":              3,
+    "frequent_failure":      4,
+    "downstream_jam":        5,
+    "logistics_jam":         6,
+    "overflow":              7,
+    "blockage":              8,
+    "low_availability":      9,
+    "parallel_imbalance":    10,
+    "long_queue":            11,
+    "long_operation":        12,
+    "long_cycle":            13,
+    "low_throughput":        14,
+    "high_defect_rate":      15,
+    "early_control":         16,
+    "idle":                  17,
+    "starvation":            18,
 }
 
 _SEVERITY_ORDER = {
@@ -58,8 +65,10 @@ _SEVERITY_ORDER = {
 _RECOMMENDATIONS: dict[str, str] = {
     # Блоки
     "overload": (
-        "Рассмотрите увеличение числа рабочих мест на этой операции, "
-        "сокращение времени цикла или перераспределение маршрутов деталей."
+        "Операция загружена на {utilization:.0%}. "
+        "С учётом коэффициента готовности ({availability:.0%}) "
+        "рекомендуется {required_machines} станк(а/ов) на данную операцию. "
+        "Альтернативы: сократить норму времени или ввести дополнительную смену."
     ),
     "overload_and_blockage": (
         "Проанализируйте цепочку целиком: устраните узкое место downstream, "
@@ -87,6 +96,10 @@ _RECOMMENDATIONS: dict[str, str] = {
         "которое не даёт деталям доходить до этого буфера."
     ),
     # Контекстные
+    "flow_imbalance": (
+        "Сбалансируйте производительность входных ветвей: "
+        "ускорьте подачу по голодающим входам или замедлите подачу по переполненным."
+    ),
     "downstream_jam": (
         "Сосредоточьте усилия на downstream-операции: она является первопричиной "
         "проблемы. Устранение блокировки upstream само по себе не поможет."
@@ -94,6 +107,32 @@ _RECOMMENDATIONS: dict[str, str] = {
     "logistics_jam": (
         "Увеличьте пропускную способность транспортной позиции "
         "или сократите транспортное плечо за счёт перекомпоновки участка."
+    ),
+    # Надёжность
+    "low_availability": (
+        "Коэффициент готовности: {availability:.0%}. "
+        "Рекомендуется увеличить частоту планового ТО для снижения аварийных остановок "
+        "или ввести резервный станок. "
+        "Скорректированная потребность в оборудовании: {required_machines} ед."
+    ),
+    "frequent_failure": (
+        "Высокая частота отказов ({failure_rate:.1f}/час) указывает на износ. "
+        "Проверьте техническое состояние оборудования, "
+        "снизьте интенсивность загрузки или замените оборудование."
+    ),
+    # Структурные
+    "parallel_imbalance": (
+        "Перенаправьте часть потока с перегруженной операции на простаивающую. "
+        "Проверьте технологическую допустимость перераспределения "
+        "с учётом возможных неявных ограничений процесса."
+    ),
+    "long_operation": (
+        "Операция значительно длиннее средней по участку. "
+        "Рассмотрите разбиение на два этапа или внедрение параллельного рабочего места."
+    ),
+    "early_control": (
+        "Перенесите контроль качества на более ранний этап маршрута, "
+        "чтобы выявлять брак до дорогостоящих операций."
     ),
     # Системные
     "long_cycle": (
@@ -132,7 +171,19 @@ class Interpretation:
     threshold: float | None
 
     @classmethod
-    def from_sign(cls, rank: int, sign: Sign) -> "Interpretation":
+    def from_sign(cls, rank: int, sign: Sign,
+                  block_metrics: Optional[BlockMetrics] = None) -> "Interpretation":
+        template = _RECOMMENDATIONS.get(sign.sign_type, "")
+        if template and block_metrics is not None:
+            try:
+                template = template.format(
+                    utilization=block_metrics.utilization,
+                    availability=block_metrics.availability,
+                    required_machines=block_metrics.required_machines,
+                    failure_rate=block_metrics.failure_rate,
+                )
+            except (KeyError, AttributeError, ValueError):
+                pass
         return cls(
             rank=rank,
             block_id=sign.block_id,
@@ -140,7 +191,7 @@ class Interpretation:
             sign_type=sign.sign_type,
             severity=sign.severity,
             message=sign.message,
-            recommendation=_RECOMMENDATIONS.get(sign.sign_type, ""),
+            recommendation=template,
             metric_name=sign.metric_name,
             metric_value=sign.metric_value,
             threshold=sign.threshold,
@@ -192,9 +243,37 @@ def run_a22(signs: list[Sign]) -> list[Sign]:
     return signs
 
 
+# ── Фильтрация избыточных признаков ──────────────────────────────────────────
+
+def _suppress_redundant(signs: list[Sign]) -> list[Sign]:
+    """
+    Убирает overflow / starvation / long_queue для буферов, которые уже
+    объяснены признаком flow_imbalance на связанном блоке сборки.
+
+    Если блок «Сборка А» получил flow_imbalance с full_inputs=[B1] и
+    starved_inputs=[B2], то отдельные признаки overflow(B1) и starvation(B2)
+    избыточны — пользователю не нужно видеть их дважды.
+    """
+    _REDUNDANT_TYPES = frozenset({"overflow", "starvation", "long_queue"})
+
+    suppressed: set[str] = set()
+    for s in signs:
+        if s.sign_type == "flow_imbalance":
+            suppressed.update(s.detail.get("full_inputs", []))
+            suppressed.update(s.detail.get("starved_inputs", []))
+
+    return [
+        s for s in signs
+        if not (s.block_id in suppressed and s.sign_type in _REDUNDANT_TYPES)
+    ]
+
+
 # ── A23: Приоритизация ────────────────────────────────────────────────────────
 
-def run_a23(signs: list[Sign]) -> list[Interpretation]:
+def run_a23(
+    signs: list[Sign],
+    result: Optional[SimulationResult] = None,
+) -> list[Interpretation]:
     """
     A23 — ранжирует интерпретации:
         1. По severity: red → yellow → green
@@ -210,7 +289,14 @@ def run_a23(signs: list[Sign]) -> list[Interpretation]:
     sorted_signs = sorted(signs, key=sort_key)
 
     return [
-        Interpretation.from_sign(rank=i + 1, sign=sign)
+        Interpretation.from_sign(
+            rank=i + 1,
+            sign=sign,
+            block_metrics=(
+                result.block_metrics.get(sign.block_id)
+                if result and sign.block_id else None
+            ),
+        )
         for i, sign in enumerate(sorted_signs)
     ]
 
@@ -228,7 +314,8 @@ def run_interpretation(
     """
     signs_a21 = run_a21(diagnosis)
     signs_a22 = run_a22(signs_a21)
-    interpretations = run_a23(signs_a22)
+    signs_filtered = _suppress_redundant(signs_a22)
+    interpretations = run_a23(signs_filtered, result)
 
     return InterpretationResult(
         interpretations=interpretations,

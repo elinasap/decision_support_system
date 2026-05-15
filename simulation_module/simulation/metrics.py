@@ -33,12 +33,14 @@ class _BlockTracker:
     block_id: str
     block_label: str = ""
     block_type: str = ""
-    current_state: str = "idle"        # idle / busy / blocked
+    current_state: str = "idle"        # idle / busy / blocked / maintenance
     state_entered_at: float = 0.0      # когда вошли в текущее состояние
     total_busy: float = 0.0
     total_blocked: float = 0.0
     total_idle: float = 0.0
+    total_maintenance: float = 0.0
     details_processed: int = 0
+    failure_count: int = 0
 
 
 @dataclass
@@ -123,8 +125,13 @@ class MetricsCollector:
                 tracker.total_busy += duration
             elif tracker.current_state == "blocked":
                 tracker.total_blocked += duration
+            elif tracker.current_state == "maintenance":
+                tracker.total_maintenance += duration
             else:  # idle
                 tracker.total_idle += duration
+
+        if new_state == "maintenance" and tracker.current_state != "maintenance":
+            tracker.failure_count += 1
 
         tracker.current_state = new_state
         tracker.state_entered_at = time
@@ -213,7 +220,9 @@ class MetricsCollector:
                 total_busy_time=t.total_busy,
                 total_blocked_time=t.total_blocked,
                 total_idle_time=t.total_idle,
+                total_maintenance_time=t.total_maintenance,
                 details_processed=t.details_processed,
+                failure_count=t.failure_count,
             )
 
         buffer_metrics = {}

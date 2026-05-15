@@ -32,6 +32,9 @@ class EventType(Enum):
     SERVICE_FINISHED = auto()   # блок закончил обработку
     DETAIL_DEPARTED = auto()    # деталь передана в downstream-буфер
     UNBLOCK_CHECK = auto()      # проверка разблокировки blocked-блока
+    FAILURE_OCCURRED = auto()       # случайный отказ оборудования
+    REPAIR_COMPLETE = auto()        # ремонт после случайного отказа завершён
+    PLANNED_MAINTENANCE = auto()    # плановое ТО по расписанию
 
 
 @dataclass(order=False)

@@ -35,6 +35,9 @@ class Model:
         """
         self._block_counter += 1
         bid = f"B{self._block_counter}"
+        while bid in self.blocks:
+            self._block_counter += 1
+            bid = f"B{self._block_counter}"
         ports = make_ports(block_type, params)
         block = Block(id=bid, type=block_type, label=label,
                       params=params, ports=ports)
@@ -218,9 +221,12 @@ class Model:
             block.ports.out_ports = b["ports"]["out"]
             block.ports.used      = set(b["ports"]["used"])
             model.blocks[b["id"]] = block
-            num = int(b["id"][1:])
-            if num > model._block_counter:
-                model._block_counter = num
+            try:
+                num = int(b["id"][1:])
+                if num > model._block_counter:
+                    model._block_counter = num
+            except ValueError:
+                pass
         for e in data["edges"].values():
             edge = Edge(
                 id=e["id"],
@@ -233,7 +239,10 @@ class Model:
                 comment=e.get("comment", ""),
             )
             model.edges[e["id"]] = edge
-            num = int(e["id"][1:])
-            if num > model._edge_counter:
-                model._edge_counter = num
+            try:
+                num = int(e["id"][1:])
+                if num > model._edge_counter:
+                    model._edge_counter = num
+            except ValueError:
+                pass
         return model

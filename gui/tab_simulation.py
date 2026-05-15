@@ -48,6 +48,7 @@ class TabSimulation(tk.Frame):
         self.app = app
         self._base_result = None   # результат базового прогона
         self._engine = None        # RecommendationEngine с порогами
+        self._last_report = None   # последний отчёт рекомендаций
         self.pack(fill="both", expand=True)
         self._build_ui()
 
@@ -108,7 +109,7 @@ class TabSimulation(tk.Frame):
         self._rec_outer.pack(fill="both", expand=True)
         self._fill_rec_empty()
 
-        # Анализ чувствительности — скрыт до первого успешного прогона без отклонений
+        # Сценарный анализ — скрыт до первого успешного прогона
         self._build_sensitivity_section(outer)
 
     def _build_section_label(self, parent, text):
@@ -203,6 +204,24 @@ class TabSimulation(tk.Frame):
                      padx=10, pady=6, anchor="w").pack(fill="x")
             return
 
+        # Кнопка деталей дисбаланса потоков (если есть соответствующие признаки)
+        fi_items = [i for i in report.interpretations if i.sign_type == "flow_imbalance"]
+        if fi_items:
+            fi_banner = tk.Frame(self._rec_outer, bg=_CLR_RED,
+                                 highlightbackground=_CLR_RED_FG, highlightthickness=1)
+            fi_banner.pack(fill="x", pady=(0, 6), padx=2)
+            tk.Label(fi_banner,
+                     text=f"✗  Обнаружен дисбаланс входных потоков ({len(fi_items)} блок(а))",
+                     font=_FONT_BOLD, bg=_CLR_RED, fg=_CLR_RED_FG,
+                     padx=10, anchor="w").pack(side="left", pady=5)
+            tk.Button(fi_banner, text="Подробнее →",
+                      font=_FONT_SMALL, relief="flat",
+                      bg=_CLR_RED_FG, fg="white",
+                      activebackground="#5a1414", activeforeground="white",
+                      padx=8, pady=3, cursor="hand2",
+                      command=self._show_flow_imbalance_window,
+                      ).pack(side="right", padx=8, pady=5)
+
         canvas = tk.Canvas(self._rec_outer, bg=_CLR_BG, highlightthickness=0)
         sb = ttk.Scrollbar(self._rec_outer, orient="vertical",
                            command=canvas.yview)
@@ -227,54 +246,168 @@ class TabSimulation(tk.Frame):
             header = f"{icon}  [{item.rank}] {item.label}"
             tk.Label(f, text=header,
                      font=_FONT_BOLD, bg=bg, fg=fg,
-                     padx=8, pady=(5, 0), anchor="w").pack(fill="x")
+                     padx=8, anchor="w").pack(fill="x", pady=(5, 0))
             tk.Label(f, text=item.message,
                      font=_FONT_SMALL, bg=bg, fg=fg,
-                     padx=16, pady=2, anchor="w",
-                     wraplength=320, justify="left").pack(fill="x")
+                     padx=16, anchor="w",
+                     wraplength=320, justify="left").pack(fill="x", pady=2)
             if item.recommendation:
                 tk.Frame(f, bg=fg, height=1).pack(fill="x", padx=8, pady=(2, 0))
                 tk.Label(f, text=f"→  {item.recommendation}",
                          font=_FONT_SMALL, bg=bg, fg=fg,
-                         padx=16, pady=(2, 5), anchor="w",
-                         wraplength=320, justify="left").pack(fill="x")
+                         padx=16, anchor="w",
+                         wraplength=320, justify="left").pack(fill="x", pady=(2, 5))
 
-    # ── Анализ чувствительности ───────────────────────────────────────────────
+    # ── Окно дисбаланса потоков ───────────────────────────────────────────────
+
+    def _show_flow_imbalance_window(self):
+        if self._last_report is None or self._base_result is None:
+            return
+
+        fi_signs = [s for s in self._last_report.diagnosis.context_signs
+                    if s.sign_type == "flow_imbalance"]
+        if not fi_signs:
+            return
+
+        win = tk.Toplevel(self)
+        win.title("Дисбаланс входных потоков")
+        win.configure(bg=_CLR_BG)
+        win.resizable(True, True)
+        win.geometry("520x420")
+        win.transient(self.winfo_toplevel())
+        win.grab_set()
+
+        # Заголовок
+        hdr = tk.Frame(win, bg=_CLR_HDR)
+        hdr.pack(fill="x")
+        tk.Label(hdr, text="⇄  Дисбаланс входных потоков",
+                 font=_FONT_BOLD, bg=_CLR_HDR, fg="white",
+                 padx=14, pady=8).pack(side="left")
+        tk.Label(hdr,
+                 text=(f"{len(fi_signs)} сборочн. блок(а) с рассинхронизированными входами"),
+                 font=_FONT_SMALL, bg=_CLR_HDR, fg="#B0C4E8",
+                 padx=6).pack(side="left")
+
+        # Прокручиваемое содержимое
+        body = tk.Frame(win, bg=_CLR_BG)
+        body.pack(fill="both", expand=True)
+
+        canvas = tk.Canvas(body, bg=_CLR_BG, highlightthickness=0)
+        sb = ttk.Scrollbar(body, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+
+        inner = tk.Frame(canvas, bg=_CLR_BG)
+        win_id = canvas.create_window((0, 0), window=inner, anchor="nw")
+        inner.bind("<Configure>",
+                   lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>",
+                    lambda e: canvas.itemconfig(win_id, width=e.width))
+
+        buf_mets = self._base_result.buffer_metrics
+
+        for sign in fi_signs:
+            card = tk.Frame(inner, bg=_CLR_RED,
+                            highlightbackground=_CLR_RED_FG, highlightthickness=1)
+            card.pack(fill="x", padx=10, pady=6)
+
+            tk.Label(card, text=f"✗  {sign.label}",
+                     font=_FONT_BOLD, bg=_CLR_RED, fg=_CLR_RED_FG,
+                     padx=10, anchor="w").pack(fill="x", pady=(7, 2))
+
+            tk.Label(card, text=sign.message,
+                     font=_FONT_SMALL, bg=_CLR_RED, fg=_CLR_RED_FG,
+                     padx=14, anchor="w",
+                     wraplength=460, justify="left").pack(fill="x")
+
+            # Две колонки: переполненные / голодающие
+            cols = tk.Frame(card, bg=_CLR_RED)
+            cols.pack(fill="x", padx=10, pady=(6, 4))
+
+            full_ids    = sign.detail.get("full_inputs", [])
+            starved_ids = sign.detail.get("starved_inputs", [])
+
+            lcol = tk.Frame(cols, bg=_CLR_RED)
+            lcol.pack(side="left", fill="both", expand=True)
+            tk.Label(lcol, text="Переполненные входы:",
+                     font=("Arial", 9, "bold"), bg=_CLR_RED, fg=_CLR_RED_FG,
+                     anchor="w").pack(anchor="w")
+            for buf_id in full_ids:
+                m = buf_mets.get(buf_id)
+                lbl   = (m.block_label if m else None) or buf_id
+                ratio = f"{m.full_ratio:.0%} полон" if m else "?"
+                tk.Label(lcol, text=f"  • {lbl}  ({ratio})",
+                         font=_FONT_SMALL, bg=_CLR_RED, fg=_CLR_RED_FG,
+                         anchor="w").pack(anchor="w")
+
+            rcol = tk.Frame(cols, bg=_CLR_RED)
+            rcol.pack(side="left", fill="both", expand=True, padx=(10, 0))
+            tk.Label(rcol, text="Голодающие входы:",
+                     font=("Arial", 9, "bold"), bg=_CLR_RED, fg=_CLR_RED_FG,
+                     anchor="w").pack(anchor="w")
+            for buf_id in starved_ids:
+                m = buf_mets.get(buf_id)
+                lbl   = (m.block_label if m else None) or buf_id
+                ratio = f"{m.empty_ratio:.0%} пуст" if m else "?"
+                tk.Label(rcol, text=f"  • {lbl}  ({ratio})",
+                         font=_FONT_SMALL, bg=_CLR_RED, fg=_CLR_RED_FG,
+                         anchor="w").pack(anchor="w")
+
+            tk.Frame(card, bg=_CLR_RED_FG, height=1).pack(fill="x", padx=8, pady=(6, 0))
+            tk.Label(card,
+                     text="→  Сбалансируйте производительность входных ветвей: "
+                          "ускорьте подачу по голодающим входам или "
+                          "замедлите подачу по переполненным.",
+                     font=_FONT_SMALL, bg=_CLR_RED, fg=_CLR_RED_FG,
+                     padx=14, anchor="w",
+                     wraplength=460, justify="left").pack(fill="x", pady=(4, 8))
+
+        # Кнопка закрытия
+        tk.Button(win, text="Закрыть", font=_FONT,
+                  relief="flat", bg="#D3D1C7", fg="#333",
+                  activebackground="#b8b6ae",
+                  padx=16, pady=4, cursor="hand2",
+                  command=win.destroy).pack(pady=10)
+
+    # ── Сценарный анализ ─────────────────────────────────────────────────────
 
     def _build_sensitivity_section(self, parent):
         self._sens_section = tk.Frame(parent, bg=_CLR_BG)
-        # не пакуем — покажем только если базовый прогон без отклонений
+        # не пакуем — покажем после первого успешного прогона
 
-        self._build_section_label(self._sens_section, "Анализ чувствительности")
+        self._build_section_label(self._sens_section, "Сценарный анализ")
 
-        ctrl = tk.Frame(self._sens_section, bg=_CLR_BG)
-        ctrl.pack(fill="x", pady=(0, 6))
-
-        tk.Label(
-            ctrl,
-            text=(
-                "Базовый прогон не выявил отклонений. "
-                "Можно проверить, как изменится поведение участка "
-                "при росте нагрузки, снижении производительности или отказе позиции."
-            ),
-            font=_FONT_SMALL, bg=_CLR_BG, fg="#888780",
-            wraplength=560, justify="left",
-        ).pack(side="left")
+        # Строка с кнопкой и статусом
+        btn_row = tk.Frame(self._sens_section, bg=_CLR_BG)
+        btn_row.pack(fill="x", pady=(0, 4))
 
         self._sens_run_btn = tk.Button(
-            ctrl,
-            text="▶  Запустить анализ",
+            btn_row,
+            text="▶  Запустить сценарный анализ",
             font=_FONT_BOLD, relief="flat",
             bg=_CLR_HDR, fg="white",
             activebackground="#1a3a7a", activeforeground="white",
-            padx=12, pady=5, cursor="hand2",
+            padx=14, pady=6, cursor="hand2",
             command=self._run_sensitivity,
         )
-        self._sens_run_btn.pack(side="left", padx=(14, 0))
+        self._sens_run_btn.pack(side="left")
 
         self._sens_status = tk.StringVar(value="")
-        tk.Label(ctrl, textvariable=self._sens_status,
-                 font=_FONT_SMALL, bg=_CLR_BG, fg="#888780").pack(side="left", padx=8)
+        tk.Label(btn_row, textvariable=self._sens_status,
+                 font=_FONT_SMALL, bg=_CLR_BG, fg="#888780").pack(side="left", padx=12)
+
+        # Пояснительный текст под кнопкой
+        tk.Label(
+            self._sens_section,
+            text=(
+                "Проверьте, как изменится поведение участка "
+                "при росте нагрузки, снижении производительности, "
+                "росте брака или отказе позиции."
+            ),
+            font=_FONT_SMALL, bg=_CLR_BG, fg="#888780",
+            wraplength=700, justify="left",
+        ).pack(anchor="w", pady=(0, 6))
 
         self._sens_results_outer = tk.Frame(self._sens_section, bg=_CLR_BG)
         self._sens_results_outer.pack(fill="both", expand=True)
@@ -302,10 +435,10 @@ class TabSimulation(tk.Frame):
             sens_report = analyzer.run()
             self._update_sensitivity_results(sens_report)
             self._sens_status.set(f"Готово — {len(sens_report.scenarios)} прогонов")
-            self.app.set_status("Анализ чувствительности завершён")
+            self.app.set_status("Сценарный анализ завершён")
 
         except Exception as e:
-            messagebox.showerror("Ошибка анализа чувствительности", str(e), parent=self)
+            messagebox.showerror("Ошибка сценарного анализа", str(e), parent=self)
             self._sens_status.set("Ошибка")
         finally:
             self._sens_run_btn.configure(state="normal")
@@ -355,11 +488,11 @@ class TabSimulation(tk.Frame):
 
             tk.Label(card, text=f"{icon}  {rob.scenario_name}",
                      font=_FONT_BOLD, bg=bg, fg=fg,
-                     padx=8, pady=(5, 0), anchor="w").pack(fill="x")
+                     padx=8, anchor="w").pack(fill="x", pady=(5, 0))
             tk.Label(card, text=rob.summary,
                      font=_FONT_SMALL, bg=bg, fg=fg,
-                     padx=16, pady=(2, 4), anchor="w",
-                     wraplength=680, justify="left").pack(fill="x")
+                     padx=16, anchor="w",
+                     wraplength=680, justify="left").pack(fill="x", pady=(2, 4))
 
             if not rob.is_robust:
                 # Показываем новые признаки из первого проблемного шага
@@ -370,7 +503,7 @@ class TabSimulation(tk.Frame):
                     tk.Label(card,
                              text=f"Шаг «{step.step_label}» — новые отклонения:",
                              font=_FONT_SMALL, bg=bg, fg=fg,
-                             padx=16, pady=(3, 1), anchor="w").pack(fill="x")
+                             padx=16, anchor="w").pack(fill="x", pady=(3, 1))
                     for sign in step.new_signs:
                         sicon = _SEVERITY_ICON.get(sign.severity, "•")
                         msg = sign.message[:90] + ("…" if len(sign.message) > 90 else "")
@@ -390,9 +523,8 @@ class TabSimulation(tk.Frame):
         if not val.ok:
             messagebox.showerror(
                 "Ошибка модели",
-                "Модель содержит ошибки валидации.\n"
-                "Исправьте их перед запуском симуляции.",
-                parent=self,
+                "Модель содержит ошибки валидации:\n\n"
+                + "\n".join(f"• {e}" for e in val.errors),
             )
             return
 
@@ -421,19 +553,22 @@ class TabSimulation(tk.Frame):
             self._update_block_table(result)
             self._update_recommendations(report)
 
-            # Сохраняем для возможного анализа чувствительности
+            # Сохраняем для сценарного анализа
             self._base_result = result
             self._engine = engine
+            self._last_report = report
 
-            # Анализ чувствительности доступен только при отсутствии отклонений
-            if not report.interpretations:
-                self._sens_section.pack(fill="x", pady=(4, 0))
-                self._sens_run_btn.configure(state="normal")
-                self._sens_status.set("")
-                for w in self._sens_results_outer.winfo_children():
-                    w.destroy()
-            else:
-                self._sens_section.pack_forget()
+            # Передаём composite scores в схему для heatmap
+            schema_tab = self.app._tabs.get("schema")
+            if schema_tab is not None:
+                schema_tab.set_scores(report.block_scores, report.buffer_scores)
+
+            # Сценарный анализ доступен всегда после базового прогона
+            self._sens_section.pack(fill="x", pady=(4, 0))
+            self._sens_run_btn.configure(state="normal")
+            self._sens_status.set("")
+            for w in self._sens_results_outer.winfo_children():
+                w.destroy()
 
             self._run_status.set(
                 f"Готово — {result.total_events_processed} событий, "
@@ -442,7 +577,7 @@ class TabSimulation(tk.Frame):
             self.app.set_status("Симуляция завершена")
 
         except Exception as e:
-            messagebox.showerror("Ошибка симуляции", str(e), parent=self)
+            messagebox.showerror("Ошибка симуляции", str(e))
             self._run_status.set("Ошибка")
         finally:
             self.configure(cursor="")

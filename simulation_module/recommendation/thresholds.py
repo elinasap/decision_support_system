@@ -32,8 +32,16 @@ class Thresholds:
     # Буферы
     avg_fill_ratio: float = 0.70    # θ_L: средняя заполненность (avg_count / capacity)
     full_ratio: float = 0.10        # θ_F: доля времени переполнения
+    theta_empty: float = 0.80       # θ_E: доля времени пустого буфера (голодание)
 
     # Системные метрики (None = порог не задан, проверка пропускается)
     avg_cycle_time: Optional[float] = None   # θ_CT
     throughput: Optional[float] = None       # θ_TP (минимальная допустимая)
     defect_rate: float = 0.05               # θ_DR
+
+    # Надёжность и ТО
+    availability: float = 0.85       # θ_A: ниже — low_availability
+    failure_rate: float = 2.0        # θ_fail: отказов/час — frequent_failure
+
+    # Структурные пороги
+    op_time_ratio: float = 2.0       # операция в N раз длиннее средней — long_operation

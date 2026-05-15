@@ -161,7 +161,11 @@ def check_operations(model: Model) -> ValidationResult:
                     f"Блок {block.display_name()}: сборка должна иметь >= 2 входов, "
                     f"задано {len(block.ports.in_ports)}"
                 )
-            if "operation_time_sec" not in block.params:
+            has_time = (
+                "operation_time_sec" in block.params
+                or "assembly_time_sec" in block.params
+            )
+            if not has_time:
                 result.add_error(
                     f"Блок {block.display_name()}: не задано время сборки "
                     f"(operation_time_sec)"

@@ -58,6 +58,7 @@ class BlockState(Enum):
     IDLE = auto()
     BUSY = auto()
     BLOCKED = auto()
+    MAINTENANCE = auto()   # ТО или аварийный ремонт
 
 
 class BlockEvent(Enum):
@@ -65,6 +66,8 @@ class BlockEvent(Enum):
     BUFFER_HAS_DETAIL = auto()  # в upstream BUFFER появилась деталь
     SERVICE_FINISHED = auto()   # обработка завершена
     DOWNSTREAM_FREE = auto()    # downstream BUFFER освободил место
+    FAILURE_OCCURRED = auto()   # произошёл отказ оборудования
+    REPAIR_COMPLETE = auto()    # ремонт завершён
 
 
 # --- охранные условия ---
@@ -117,6 +120,38 @@ class BlockAutomaton(StateMachine):
         Transition(
             from_state=BlockState.BLOCKED,
             event=BlockEvent.DOWNSTREAM_FREE,
+            to_state=BlockState.IDLE,
+            guard=None,
+            guard_description="без условия",
+        ),
+
+        # Из любого рабочего состояния → MAINTENANCE при отказе
+        Transition(
+            from_state=BlockState.IDLE,
+            event=BlockEvent.FAILURE_OCCURRED,
+            to_state=BlockState.MAINTENANCE,
+            guard=None,
+            guard_description="без условия",
+        ),
+        Transition(
+            from_state=BlockState.BUSY,
+            event=BlockEvent.FAILURE_OCCURRED,
+            to_state=BlockState.MAINTENANCE,
+            guard=None,
+            guard_description="без условия",
+        ),
+        Transition(
+            from_state=BlockState.BLOCKED,
+            event=BlockEvent.FAILURE_OCCURRED,
+            to_state=BlockState.MAINTENANCE,
+            guard=None,
+            guard_description="без условия",
+        ),
+
+        # MAINTENANCE → IDLE после завершения ремонта
+        Transition(
+            from_state=BlockState.MAINTENANCE,
+            event=BlockEvent.REPAIR_COMPLETE,
             to_state=BlockState.IDLE,
             guard=None,
             guard_description="без условия",

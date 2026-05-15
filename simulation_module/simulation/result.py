@@ -27,18 +27,17 @@ class BlockMetrics:
     block_label: str = ""
     block_type: str = ""
 
-    total_busy_time: float = 0.0       # суммарное время обработки
-    total_blocked_time: float = 0.0    # суммарное время блокировки
-    total_idle_time: float = 0.0       # суммарное время простоя
+    total_busy_time: float = 0.0        # суммарное время обработки
+    total_blocked_time: float = 0.0     # суммарное время блокировки
+    total_idle_time: float = 0.0        # суммарное время простоя
+    total_maintenance_time: float = 0.0 # суммарное время ТО и ремонта
 
-    details_processed: int = 0         # сколько деталей обработано
+    details_processed: int = 0          # сколько деталей обработано
+    failure_count: int = 0              # сколько раз случался отказ
 
     @property
     def utilization(self) -> float:
-        """
-        Загрузка блока: доля времени, когда он реально работал.
-        utilization = busy / (busy + blocked + idle)
-        """
+        """Загрузка: доля рабочего времени (без учёта ТО)."""
         total = self.total_busy_time + self.total_blocked_time + self.total_idle_time
         if total == 0:
             return 0.0
@@ -46,14 +45,37 @@ class BlockMetrics:
 
     @property
     def blocked_ratio(self) -> float:
-        """
-        Доля времени, когда блок был заблокирован (downstream переполнен).
-        Высокое значение = узкое место впереди.
-        """
+        """Доля времени блокировки (downstream переполнен)."""
         total = self.total_busy_time + self.total_blocked_time + self.total_idle_time
         if total == 0:
             return 0.0
         return self.total_blocked_time / total
+
+    @property
+    def availability(self) -> float:
+        """Коэффициент готовности: доля времени, когда оборудование не на ТО."""
+        total = (self.total_busy_time + self.total_blocked_time
+                 + self.total_idle_time + self.total_maintenance_time)
+        if total == 0 or self.total_maintenance_time == 0:
+            return 1.0
+        return 1.0 - self.total_maintenance_time / total
+
+    @property
+    def required_machines(self) -> int:
+        """Минимальное число станков с учётом загрузки и готовности."""
+        import math
+        if self.availability <= 0:
+            return 1
+        return max(1, math.ceil(self.utilization / self.availability))
+
+    @property
+    def failure_rate(self) -> float:
+        """Частота отказов: количество отказов на час модельного времени."""
+        total = (self.total_busy_time + self.total_blocked_time
+                 + self.total_idle_time + self.total_maintenance_time)
+        if total == 0:
+            return 0.0
+        return self.failure_count / (total / 3600)
 
 
 @dataclass
@@ -84,6 +106,13 @@ class BufferMetrics:
         if self._total_observed_time == 0:
             return 0.0
         return self.time_full / self._total_observed_time
+
+    @property
+    def empty_ratio(self) -> float:
+        """Доля времени, когда буфер был пуст."""
+        if self._total_observed_time == 0:
+            return 0.0
+        return self.time_empty / self._total_observed_time
 
 
 @dataclass

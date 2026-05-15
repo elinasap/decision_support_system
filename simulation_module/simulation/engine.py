@@ -78,6 +78,10 @@ class OperationRuntime:
     defect_prob: float = 0.0           # только для CONTROL
     threshold: float = 0.0             # только для CONTROL
     has_internal_control: bool = False  # только для PROCESS
+    output_type: str = ""               # только для ASSEMBLY
+    mtbf_sec: Optional[float] = None              # среднее время между случайными отказами
+    mttr_sec: Optional[float] = None              # длительность ремонта/ТО
+    maintenance_interval_sec: Optional[float] = None  # интервал планового ТО
 
 
 @dataclass
@@ -232,10 +236,12 @@ class Simulator:
                                   params.get("t_proc", 0)))
                 elif btype == "assembly":
                     stime = float(params.get("assembly_time_sec",
-                                  params.get("t_asm", 0)))
+                                  params.get("operation_time_sec",
+                                  params.get("t_asm", 0))))
                 elif btype == "control":
                     stime = float(params.get("control_time_sec",
-                                  params.get("t_ctrl", 0)))
+                                  params.get("operation_time_sec",
+                                  params.get("t_ctrl", 0))))
                 elif btype == "transport":
                     stime = float(params.get("transport_time_sec",
                                   params.get("t_trans", 0)))
@@ -279,6 +285,13 @@ class Simulator:
                     service_time=stime,
                 )
 
+                mtbf_raw = params.get("mtbf_sec")
+                mttr_raw = params.get("mttr_sec")
+                maint_raw = params.get("maintenance_interval_sec")
+                mtbf = float(mtbf_raw) if mtbf_raw not in (None, "", 0) else None
+                mttr = float(mttr_raw) if mttr_raw not in (None, "", 0) else None
+                maint_interval = float(maint_raw) if maint_raw not in (None, "", 0) else None
+
                 op_runtime = OperationRuntime(
                     block_id=bid,
                     block_type=btype,
@@ -289,9 +302,30 @@ class Simulator:
                     threshold=float(params.get("threshold", 0)),
                     has_internal_control=bool(params.get(
                         "has_internal_control", False)),
+                    output_type=params.get("output_type", ""),
+                    mtbf_sec=mtbf,
+                    mttr_sec=mttr,
+                    maintenance_interval_sec=maint_interval,
                 )
                 self._operations[bid] = op_runtime
                 self._metrics.register_block(bid, label, btype)
+
+                # Запланировать первый случайный отказ (если задан MTBF)
+                if mtbf is not None and mtbf > 0:
+                    ttf = self._rng.expovariate(1.0 / mtbf)
+                    self._queue.schedule(
+                        time=ttf,
+                        event_type=EventType.FAILURE_OCCURRED,
+                        block_id=bid,
+                    )
+
+                # Запланировать первое плановое ТО (если задан интервал)
+                if maint_interval is not None and maint_interval > 0:
+                    self._queue.schedule(
+                        time=maint_interval,
+                        event_type=EventType.PLANNED_MAINTENANCE,
+                        block_id=bid,
+                    )
 
         # Классифицировать SINK: product vs scrap
         self._classify_sinks()
@@ -324,15 +358,37 @@ class Simulator:
     def _classify_sinks(self) -> None:
         """
         Определить, какие SINK принимают готовую продукцию, а какие — брак.
-        Логика: если в SINK ведёт связь из порта out_defect — это scrap_sink.
-        Остальные — product_sink.
+        Буфер считается «браковым», если принимает из порта out_defect.
+        Транзитивно: буфер после «бракового» буфера тоже браковый.
+        SINK считается scrap_sink если хотя бы один его upstream-блок — браковый.
         """
-        for sink_id in self._sinks:
-            is_scrap = False
-            for edge in self._incoming.get(sink_id, []):
+        scrap_nodes: set[str] = set()
+
+        # Буферы, напрямую принимающие из out_defect
+        for buf_id in self._buffers:
+            for edge in self._incoming.get(buf_id, []):
                 if edge["from_port"] == "out_defect":
-                    is_scrap = True
+                    scrap_nodes.add(buf_id)
                     break
+
+        # Транзитивное распространение вдоль цепочек буферов
+        changed = True
+        while changed:
+            changed = False
+            for buf_id in self._buffers:
+                if buf_id in scrap_nodes:
+                    continue
+                for edge in self._incoming.get(buf_id, []):
+                    if edge["from_block"] in scrap_nodes:
+                        scrap_nodes.add(buf_id)
+                        changed = True
+                        break
+
+        for sink_id in self._sinks:
+            is_scrap = any(
+                edge["from_port"] == "out_defect" or edge["from_block"] in scrap_nodes
+                for edge in self._incoming.get(sink_id, [])
+            )
             if is_scrap:
                 self._scrap_sinks.add(sink_id)
             else:
@@ -403,6 +459,12 @@ class Simulator:
                 self._handle_detail_departed(event)
             elif event.event_type == EventType.UNBLOCK_CHECK:
                 self._handle_unblock_check(event)
+            elif event.event_type == EventType.FAILURE_OCCURRED:
+                self._handle_failure_occurred(event)
+            elif event.event_type == EventType.REPAIR_COMPLETE:
+                self._handle_repair_complete(event)
+            elif event.event_type == EventType.PLANNED_MAINTENANCE:
+                self._handle_planned_maintenance(event)
 
     # ══════════════════════════════════════════════════════════
     # Обработчики событий
@@ -461,7 +523,7 @@ class Simulator:
         if op is None:
             return
 
-        # Проверить: блок должен быть IDLE и в upstream должна быть деталь
+        # Проверить: блок должен быть IDLE (не на ТО) и в upstream должна быть деталь
         if op.automaton.state != BlockState.IDLE:
             return
         if not op.op_state.has_upstream_detail:
@@ -476,6 +538,15 @@ class Simulator:
         detail_rt = self._take_detail_from_upstream(op)
         if detail_rt is None:
             return
+
+        # Для ASSEMBLY: забрать и удалить компоненты из остальных буферов
+        if op.block_type == "assembly":
+            for buf_state in op.op_state.upstream_buffers:
+                buf_rt = self._buffers.get(buf_state.block_id)
+                if buf_rt is None or buf_rt.state.is_empty:
+                    continue
+                consumed = self._pop_from_buffer(buf_rt, self._clock)
+                self._details.pop(consumed.uid, None)
 
         # Автомат блока: IDLE → BUSY
         op.automaton.fire(BlockEvent.BUFFER_HAS_DETAIL, op.op_state)
@@ -527,6 +598,10 @@ class Simulator:
         detail_rt.instance.leave_block(self._clock)
         self._metrics.block_detail_processed(block_id)
 
+        # Для ASSEMBLY — сменить тип детали на выходной
+        if op.block_type == "assembly" and op.output_type:
+            detail_rt.instance.type_id = op.output_type
+
         # Если CONTROL — проверить качество
         if op.block_type == "control":
             self._perform_quality_check(op, detail_rt)
@@ -535,16 +610,32 @@ class Simulator:
         if op.block_type == "process" and op.has_internal_control:
             self._perform_quality_check(op, detail_rt)
 
+
+        # Если это ремонт дефектной детали —
+        # переводим DEFECTIVE -> REPAIRED
+        if (
+            op.block_type == "process"
+            and detail_rt.quality.state == QualityState.DEFECTIVE
+        ):
+            ctx = QualityCheckContext(
+                detail=detail_rt.instance,
+                detail_types=self._detail_types,
+            )
+
+            detail_rt.quality.fire(
+                QualityEvent.REPAIR_COMPLETE,
+                ctx
+            )
+
         # Определить куда отправлять деталь
         is_defective = (detail_rt.instance.quality_state ==
                         DetailQualityState.DEFECTIVE)
+        detail_type = detail_rt.instance.type_id
 
         if is_defective:
-            # Искать путь через out_defect
-            target = self._find_defect_target(block_id)
+            target = self._find_defect_target(block_id, detail_type)
         else:
-            # Основной путь: через out / out_good
-            target = self._find_normal_target(block_id)
+            target = self._find_normal_target(block_id, detail_type)
 
         if target is None:
             # Некуда отправить деталь — блокируемся
@@ -609,11 +700,12 @@ class Simulator:
         # Определить куда отправлять
         is_defective = (detail_rt.instance.quality_state ==
                         DetailQualityState.DEFECTIVE)
+        detail_type = detail_rt.instance.type_id
 
         if is_defective:
-            target = self._find_defect_target(block_id)
+            target = self._find_defect_target(block_id, detail_type)
         else:
-            target = self._find_normal_target(block_id)
+            target = self._find_normal_target(block_id, detail_type)
 
         if target is None:
             return
@@ -639,6 +731,109 @@ class Simulator:
             op.op_state.current_detail = None
             op.op_state.service_start_time = None
             self._try_start_next_on_block(op)
+
+    def _handle_planned_maintenance(self, event: SimEvent) -> None:
+        """
+        Плановое ТО по расписанию.
+        Переводит блок в MAINTENANCE независимо от текущего состояния,
+        планирует REPAIR_COMPLETE через mttr_sec,
+        затем следующее ТО через maintenance_interval_sec.
+        """
+        block_id = event.block_id
+        op = self._operations.get(block_id)
+        if op is None or op.maintenance_interval_sec is None:
+            return
+
+        # Прерываем обработку если шла
+        if op.automaton.state == BlockState.BUSY and op.op_state.current_detail is not None:
+            op.op_state.interrupted_detail = op.op_state.current_detail
+            op.op_state.current_detail = None
+            op.op_state.service_start_time = None
+
+        op.automaton.fire(BlockEvent.FAILURE_OCCURRED, op.op_state)
+        self._metrics.block_state_changed(block_id, "maintenance", self._clock)
+
+        duration = op.mttr_sec or 0.0
+        repair_time = self._clock + duration
+
+        self._queue.schedule(
+            time=repair_time,
+            event_type=EventType.REPAIR_COMPLETE,
+            block_id=block_id,
+            data={"planned": True},
+        )
+
+        # Следующее ТО — через интервал после окончания этого
+        self._queue.schedule(
+            time=repair_time + op.maintenance_interval_sec,
+            event_type=EventType.PLANNED_MAINTENANCE,
+            block_id=block_id,
+        )
+
+    def _handle_failure_occurred(self, event: SimEvent) -> None:
+        """
+        Отказ оборудования.
+        Переводит блок в MAINTENANCE, запоминает прерванную деталь,
+        планирует REPAIR_COMPLETE через mttr_sec.
+        """
+        block_id = event.block_id
+        op = self._operations.get(block_id)
+        if op is None or op.mtbf_sec is None:
+            return
+
+        # Прерываем обработку (если шла)
+        if op.automaton.state == BlockState.BUSY and op.op_state.current_detail is not None:
+            op.op_state.interrupted_detail = op.op_state.current_detail
+            op.op_state.current_detail = None
+            op.op_state.service_start_time = None
+
+        op.automaton.fire(BlockEvent.FAILURE_OCCURRED, op.op_state)
+        self._metrics.block_state_changed(block_id, "maintenance", self._clock)
+
+        mttr = op.mttr_sec or op.mtbf_sec * 0.1
+        self._queue.schedule(
+            time=self._clock + mttr,
+            event_type=EventType.REPAIR_COMPLETE,
+            block_id=block_id,
+        )
+
+    def _handle_repair_complete(self, event: SimEvent) -> None:
+        """
+        Ремонт завершён.
+        Переводит блок в IDLE, возвращает прерванную деталь в upstream буфер,
+        планирует следующий отказ.
+        """
+        block_id = event.block_id
+        op = self._operations.get(block_id)
+        if op is None:
+            return
+
+        op.automaton.fire(BlockEvent.REPAIR_COMPLETE, op.op_state)
+        self._metrics.block_state_changed(block_id, "idle", self._clock)
+
+        # Вернуть прерванную деталь в upstream буфер
+        if op.op_state.interrupted_detail is not None:
+            detail_instance = op.op_state.interrupted_detail
+            op.op_state.interrupted_detail = None
+            for buf_state in op.op_state.upstream_buffers:
+                buf_rt = self._buffers.get(buf_state.block_id)
+                if buf_rt is not None and not buf_rt.state.is_full:
+                    detail_rt = self._details.get(detail_instance.uid)
+                    if detail_rt is not None:
+                        self._push_to_buffer(buf_rt, detail_rt, self._clock)
+                    break
+
+        # Запланировать следующий отказ
+        if op.mtbf_sec and op.mtbf_sec > 0:
+            ttf = self._rng.expovariate(1.0 / op.mtbf_sec)
+            self._queue.schedule(
+                time=self._clock + ttf,
+                event_type=EventType.FAILURE_OCCURRED,
+                block_id=block_id,
+            )
+
+        # Попробовать сразу начать следующую операцию
+        self._try_start_next_on_block(op)
 
     # ══════════════════════════════════════════════════════════
     # Вспомогательные методы
@@ -797,11 +992,9 @@ class Simulator:
             detail_types=self._detail_types,
         )
 
-        if r <= op.threshold:
-            # Контроль пройден
+        if r > op.threshold:
             detail_rt.quality.fire(QualityEvent.CONTROL_PASSED, ctx)
         else:
-            # Контроль не пройден — брак
             detail_rt.quality.fire(QualityEvent.CONTROL_FAILED, ctx)
             detail_rt.instance.quality_state = DetailQualityState.DEFECTIVE
 
@@ -865,33 +1058,51 @@ class Simulator:
                 return self._buffers[to_id]
         return None
 
-    def _find_normal_target(self, block_id: str
-                            ) -> Optional[dict]:
+    def _accepts_type(self, block_id: str, detail_type: str) -> bool:
+        """
+        Проверить, принимает ли блок детали данного типа.
+
+        Если у блока задан параметр "types" (список строк) — деталь
+        пропускается только если её тип входит в этот список.
+        Если "types" не задан или пуст — принимаются все типы (обратная совместимость).
+        """
+        if not detail_type:
+            return True
+        block = self._model["blocks"].get(block_id, {})
+        types = block.get("params", {}).get("types", [])
+        if not types:
+            return True
+        return detail_type in types
+
+    def _find_normal_target(self, block_id: str,
+                            detail_type: str = "") -> Optional[dict]:
         """Найти цель для нормальной (не бракованной) детали."""
         for edge in self._outgoing.get(block_id, []):
-            port = edge["from_port"]
-            if port == "out_defect":
+            if edge["from_port"] == "out_defect":
                 continue
             to_id = edge["to_block"]
+            if not self._accepts_type(to_id, detail_type):
+                continue
             if to_id in self._buffers:
                 return {"type": "buffer", "id": to_id}
             if to_id in self._sinks:
                 return {"type": "sink", "id": to_id}
         return None
 
-    def _find_defect_target(self, block_id: str
-                            ) -> Optional[dict]:
+    def _find_defect_target(self, block_id: str,
+                            detail_type: str = "") -> Optional[dict]:
         """Найти цель для бракованной детали (через out_defect)."""
         for edge in self._outgoing.get(block_id, []):
-            port = edge["from_port"]
-            if port == "out_defect":
+            if edge["from_port"] == "out_defect":
                 to_id = edge["to_block"]
+                if not self._accepts_type(to_id, detail_type):
+                    continue
                 if to_id in self._buffers:
                     return {"type": "buffer", "id": to_id}
                 if to_id in self._sinks:
                     return {"type": "sink", "id": to_id}
         # Если нет out_defect — бракованная деталь идёт тем же путём
-        return self._find_normal_target(block_id)
+        return self._find_normal_target(block_id, detail_type)
 
     # ══════════════════════════════════════════════════════════
     # Финализация
